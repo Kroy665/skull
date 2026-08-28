@@ -18,6 +18,7 @@ from skull.config import (
     load_system_prompt,
 )
 from skull.core.client import stream_chat
+from skull.core.compaction import compact_if_needed
 from skull.core.memory_context import (
     PLAN_MODE_ADDENDUM,
     build_memory_context,
@@ -65,6 +66,14 @@ class Session:
         mutating tools are withheld and the model is instructed to propose
         a plan instead of acting.
         """
+        # Compact BEFORE capturing the checkpoint - if this shrinks
+        # self.messages, checkpoint must reflect the post-compaction length,
+        # or the later `del messages[checkpoint:]` rollback would operate on
+        # stale indices.
+        self.messages, compacted = compact_if_needed(self.messages)
+        if compacted:
+            tprint(f"{DIM}(compacted older conversation history to stay within context limits){RESET}")
+
         messages = self.messages
         checkpoint = len(messages)
         messages.append({"role": "user", "content": user_input})

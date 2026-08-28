@@ -8,11 +8,24 @@ mode.
 
 - Chat with streaming responses in your terminal
 - Search the web and scrape pages (`web_search`, `scrape_page`)
-- Run throwaway Python in an isolated E2B cloud sandbox (`run_python`)
-- **Write its own tools at runtime** (`create_skill`) — once created, a
-  skill is saved to `skills/` and reused in every future session
-- **Long-term memory** — remembers facts about you and past conversations
-  across sessions, using local embeddings (no external API needed for this)
+- Run throwaway Python in an isolated E2B cloud sandbox (`run_python`),
+  including reading/writing files there (`sandbox_read_file`,
+  `sandbox_write_file`, `sandbox_list_directory`)
+- Read files on your own machine freely (`read_file`, `list_directory`); writing
+  (`write_file`) and running shell commands (`run_command`) require your
+  explicit y/n approval every time, since those touch your real filesystem
+- **Background processes** — `run_command(background=true)` starts a
+  long-running process (a dev server, a watcher) detached and returns
+  immediately, instead of hanging until timeout; manage it with
+  `list_background_commands`, `read_background_log`, `stop_background_command`
+- **Write its own tools at runtime** (`create_skill`/`delete_skill`) — once
+  created, a skill is saved to `skills/` and reused in every future session
+- **Long-term memory** (`remember`/`forget`/`recall_memory`) — remembers
+  facts about you and past conversations across sessions, using local
+  embeddings (no external API needed for this)
+- **Automatic context compaction** — when the conversation grows large, the
+  oldest history is summarized into a compact note instead of the session
+  erroring out or requiring a manual reset
 - **Plan mode** (`/plan`) — research-only mode where the model proposes a
   plan instead of taking any action; `/auto` returns to normal mode
 - Inline "ghost text" suggestions for your next likely question, arrow-key
@@ -75,17 +88,22 @@ src/skull/
         client.py            streaming Qwen chat-completions calls
         session.py            turn-handling loop + interactive REPL
         memory_context.py      memory retrieval, plan-mode instructions
+        compaction.py           summarizes old history to stay within context limits
     tools/
         registry.py            tool schemas + dispatch, plan-mode filtering
         web.py                  web_search / scrape_page
-        sandbox.py               E2B sandbox execution for run_python
+        sandbox.py               E2B sandbox execution for run_python + sandbox file I/O
         skills.py                self-created skill storage (skills/<name>/)
+        shell.py                 run_command (gated) + background process management
+        files.py                 local read_file/write_file/list_directory
+        permission.py            shared interactive y/n approval prompt
     storage/
         store.py                 local vector store (persona facts + conversation history)
     ui/
         spinner.py               per-action loading animations
         ghost_input.py            raw-terminal input with ghost text + history
         suggestion.py             background "next question" prediction
+        output.py                 terminal-safe print (explicit \r\n, avoids OPOST quirks)
 SYSTEM_PROMPT.md            the model's system prompt (editable without touching code)
 skills/                      self-created skills (starts empty)
 memory/                      persona facts + conversation log (starts empty, gitignored)

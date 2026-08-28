@@ -31,7 +31,7 @@ def stream_chat(messages: list, tools: list, spinner: Spinner = None):
         json={
             "model": QWEN_MODEL,
             "messages": messages,
-            "max_tokens": 1024,
+            "max_tokens": 8192,
             "stream": True,
             "chat_template_kwargs": {"enable_thinking": False},
             "tools": tools,

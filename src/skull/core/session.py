@@ -1,5 +1,6 @@
 """The turn-handling loop and the interactive REPL."""
 
+import json
 import sys
 
 import requests
@@ -30,6 +31,8 @@ from skull.ui import ghost_input
 from skull.ui.output import tprint
 from skull.ui.spinner import Spinner
 from skull.ui.suggestion import SuggestionEngine
+
+MAX_MALFORMED_RETRIES = 2
 
 
 class Session:
@@ -65,6 +68,7 @@ class Session:
         messages = self.messages
         checkpoint = len(messages)
         messages.append({"role": "user", "content": user_input})
+        malformed_retries = 0
 
         while True:
             # Rebuild tools/impls every round-trip: a skill created mid-turn
@@ -119,17 +123,44 @@ class Session:
                 tc for tc in tool_calls if not _is_valid_json(tc["function"].get("arguments"))
             ]
             if malformed:
-                names = ", ".join(tc["function"]["name"] for tc in malformed)
-                tprint(
-                    f"{YELLOW}Model produced malformed tool-call arguments for: "
-                    f"{names}. Discarding this turn.{RESET}"
-                )
-                del messages[checkpoint:]
-                return False
+                malformed_retries += 1
+                if malformed_retries > MAX_MALFORMED_RETRIES:
+                    names = ", ".join(tc["function"]["name"] for tc in malformed)
+                    tprint(
+                        f"{YELLOW}Model repeatedly produced malformed tool-call arguments "
+                        f"for: {names}. Giving up on this turn.{RESET}"
+                    )
+                    del messages[checkpoint:]
+                    return False
 
+            # Execute every valid tool call and, for any malformed one, feed
+            # back a normal tool-error message instead - every tool_calls
+            # entry in assistant_msg needs a matching tool response either
+            # way, and this lets the model retry (e.g. with shorter content)
+            # instead of losing everything it already got right this turn.
+            # Common cause of malformed args: the response got cut off
+            # mid-argument by max_tokens (e.g. a large file-write payload),
+            # leaving truncated/invalid JSON.
             for tc in tool_calls:
-                tool_spinner = Spinner()
-                result = run_tool_call(tc, impls, self.verbose_tools, spinner=tool_spinner)
+                if not _is_valid_json(tc["function"].get("arguments")):
+                    tprint(
+                        f"{YELLOW}Model produced malformed tool-call arguments for: "
+                        f"{tc['function']['name']}. Asking it to retry.{RESET}"
+                    )
+                    result = json.dumps(
+                        {
+                            "error": (
+                                "Your arguments for this tool call were not valid JSON "
+                                "(the response may have been cut off before it finished, "
+                                "often because the content was too long). Please retry - "
+                                "consider shorter content, or splitting a large file write "
+                                "into a create followed by append calls."
+                            )
+                        }
+                    )
+                else:
+                    tool_spinner = Spinner()
+                    result = run_tool_call(tc, impls, self.verbose_tools, spinner=tool_spinner)
                 messages.append(
                     {
                         "role": "tool",

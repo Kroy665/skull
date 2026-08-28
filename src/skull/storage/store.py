@@ -75,6 +75,8 @@ class VectorStore:
     def _save_vectors(self):
         if self._vectors is not None:
             np.save(self.npy_path, self._vectors)
+        else:
+            self.npy_path.unlink(missing_ok=True)
 
     def _append_jsonl(self, entry: dict):
         with self.jsonl_path.open("a") as f:
@@ -117,6 +119,31 @@ class VectorStore:
 
     def all(self) -> list:
         return list(self._entries)
+
+    def delete(self, text: str) -> dict:
+        """Remove the entry whose text exactly matches `text`. Exact match
+        (rather than an index) so callers can reference a fact by quoting it
+        back, e.g. after finding it via search() - positions aren't stable
+        identifiers once other entries are added or removed."""
+        idx = next((i for i, e in enumerate(self._entries) if e["text"] == text), None)
+        if idx is None:
+            return {"error": "no matching entry found", "deleted": False}
+
+        del self._entries[idx]
+        if self._vectors is not None:
+            self._vectors = np.delete(self._vectors, idx, axis=0)
+            if len(self._vectors) == 0:
+                self._vectors = None
+
+        # Rewrite the whole jsonl - simplest way to keep it in sync with an
+        # in-place list deletion, and these stores are small (see module
+        # docstring: fine up to tens of thousands of entries).
+        with self.jsonl_path.open("w") as f:
+            for entry in self._entries:
+                f.write(json.dumps(entry) + "\n")
+        self._save_vectors()
+
+        return {"status": "deleted", "deleted": True, "remaining": len(self._entries)}
 
 
 _stores = {}

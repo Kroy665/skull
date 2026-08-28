@@ -1,10 +1,12 @@
 """Streaming chat-completion calls against the Qwen endpoint."""
 
 import json
+import sys
 
 import requests
 
 from skull.config import CYAN, QWEN_KEY, QWEN_MODEL, QWEN_URL, RESET
+from skull.ui.output import tprint, twrite
 from skull.ui.spinner import Spinner
 
 
@@ -51,7 +53,8 @@ def stream_chat(messages: list, tools: list, spinner: Spinner = None):
             spinner.stop()
             spinner_stopped = True
         if not printed_assistant_label:
-            print(f"{CYAN}assistant>{RESET} ", end="", flush=True)
+            twrite(f"{CYAN}assistant>{RESET} ")
+            sys.stdout.flush()
             printed_assistant_label = True
 
     for line in resp.iter_lines():
@@ -73,7 +76,8 @@ def stream_chat(messages: list, tools: list, spinner: Spinner = None):
         piece = delta.get("content")
         if piece:
             _reveal()
-            print(piece, end="", flush=True)
+            twrite(piece)
+            sys.stdout.flush()
             full_content.append(piece)
 
         for tc_delta in delta.get("tool_calls") or []:
@@ -95,6 +99,6 @@ def stream_chat(messages: list, tools: list, spinner: Spinner = None):
     if spinner and not spinner_stopped:
         spinner.stop()
     if printed_assistant_label or full_content:
-        print()
+        tprint()
     ordered_tool_calls = [tool_calls[i] for i in sorted(tool_calls)] if tool_calls else None
     return "".join(full_content), ordered_tool_calls, finish_reason

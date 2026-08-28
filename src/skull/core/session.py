@@ -27,6 +27,7 @@ from skull.tools import sandbox as scratch
 from skull.tools import skills as sm
 from skull.tools.registry import BUILTIN_IMPLS, _is_valid_json, build_tools_and_impls, run_tool_call
 from skull.ui import ghost_input
+from skull.ui.output import tprint
 from skull.ui.spinner import Spinner
 from skull.ui.suggestion import SuggestionEngine
 
@@ -89,13 +90,13 @@ class Session:
                 )
             except requests.HTTPError as e:
                 spinner.stop()
-                print(f"{YELLOW}HTTP error: {e}{RESET}")
-                print(f"{YELLOW}{e.response.text}{RESET}")
+                tprint(f"{YELLOW}HTTP error: {e}{RESET}")
+                tprint(f"{YELLOW}{e.response.text}{RESET}")
                 del messages[checkpoint:]
                 return False
             except requests.RequestException as e:
                 spinner.stop()
-                print(f"{YELLOW}Request failed: {e}{RESET}")
+                tprint(f"{YELLOW}Request failed: {e}{RESET}")
                 del messages[checkpoint:]
                 return False
             finally:
@@ -119,7 +120,7 @@ class Session:
             ]
             if malformed:
                 names = ", ".join(tc["function"]["name"] for tc in malformed)
-                print(
+                tprint(
                     f"{YELLOW}Model produced malformed tool-call arguments for: "
                     f"{names}. Discarding this turn.{RESET}"
                 )
@@ -140,12 +141,12 @@ class Session:
 
 
 def _print_banner(session: Session):
-    print(f"{BOLD}Qwen terminal chat{RESET} {DIM}({QWEN_MODEL} @ {QWEN_URL}){RESET}")
-    print(f"{DIM}Built-in tools: {', '.join(BUILTIN_IMPLS)}{RESET}")
+    tprint(f"{BOLD}Qwen terminal chat{RESET} {DIM}({QWEN_MODEL} @ {QWEN_URL}){RESET}")
+    tprint(f"{DIM}Built-in tools: {', '.join(BUILTIN_IMPLS)}{RESET}")
     skill_names = [e["name"] for e in sm.list_skills()]
     if skill_names:
-        print(f"{DIM}Learned skills: {', '.join(skill_names)}{RESET}")
-    print(
+        tprint(f"{DIM}Learned skills: {', '.join(skill_names)}{RESET}")
+    tprint(
         f"{DIM}Type 'exit', 'quit', or Ctrl-D to leave. '/reset' clears history. "
         f"'/plan' enters plan mode (research-only, no writes). '/auto' returns to normal mode. "
         f"'/verbose' shows full tool output, '/concise' collapses it back to one line (default).{RESET}\n"
@@ -172,7 +173,7 @@ def run():
                 prompt_label, session.suggestions.get, history=session.input_history
             ).strip()
         except (EOFError, KeyboardInterrupt):
-            print()
+            tprint()
             break
 
         if not user_input:
@@ -184,29 +185,29 @@ def run():
         if user_input == "/reset":
             session.reset_messages()
             session.suggestions.clear()
-            print(f"{DIM}history cleared{RESET}\n")
+            tprint(f"{DIM}history cleared{RESET}\n")
             continue
         if user_input == "/plan":
             session.plan_mode = True
-            print(
+            tprint(
                 f"{DIM}Plan mode on: research-only, no create_skill/remember/skill "
                 f"calls until /auto.{RESET}\n"
             )
             continue
         if user_input == "/auto":
             session.plan_mode = False
-            print(f"{DIM}Auto mode on: full tool access restored.{RESET}\n")
+            tprint(f"{DIM}Auto mode on: full tool access restored.{RESET}\n")
             continue
         if user_input == "/verbose":
             session.verbose_tools = True
-            print(f"{DIM}Verbose mode on: tool calls show full output.{RESET}\n")
+            tprint(f"{DIM}Verbose mode on: tool calls show full output.{RESET}\n")
             continue
         if user_input == "/concise":
             session.verbose_tools = False
-            print(f"{DIM}Concise mode on: tool calls show a one-line summary.{RESET}\n")
+            tprint(f"{DIM}Concise mode on: tool calls show a one-line summary.{RESET}\n")
             continue
 
         session.suggestions.clear()
         session.handle_turn(user_input)
         session.suggestions.refresh(session.messages[1:])  # skip the system message
-        print()
+        tprint()

@@ -54,6 +54,17 @@ class Spinner:
     def stop(self):
         self._stop.set()
         if self._thread is not None:
-            self._thread.join(timeout=0.5)
+            self._thread.join(timeout=2.0)
+            if self._thread.is_alive():
+                # Extremely unlikely (the loop only sleeps 0.08s between
+                # checks), but if it ever happens, don't silently proceed -
+                # a still-running spinner thread writing to stdout at the
+                # same time as the next print()/input() call corrupts the
+                # terminal (interleaved writes, stray \r, misplaced cursor).
+                raise RuntimeError("Spinner thread did not stop in time")
+        # Clear the line AND move to a fresh one, so whatever prints next
+        # (which may include long lines that wrap across multiple terminal
+        # rows) always starts from a known, empty line rather than
+        # overwriting/colliding with spinner remnants on the current row.
         sys.stdout.write("\r\033[K")
         sys.stdout.flush()

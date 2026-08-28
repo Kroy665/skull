@@ -6,9 +6,11 @@ import json
 
 from skull.config import DIM, MAGENTA, RESET
 from skull.storage import store as mem
+from skull.tools import shell
 from skull.tools import skills as sm
 from skull.tools import sandbox as scratch
 from skull.tools import web as wt
+from skull.ui.output import tprint
 
 # ---------------------------------------------------------------------------
 # Built-in tools: always available (unless withheld by plan mode).
@@ -85,13 +87,123 @@ BUILTIN_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_command",
+            "description": (
+                "Run a shell command directly on the user's own machine, with the user's "
+                "full permissions - use this only when a task genuinely requires touching "
+                "the local system (installing packages, inspecting local files/processes, "
+                "git operations, etc.) that run_python's isolated sandbox can't do. Every "
+                "call requires the user's explicit interactive y/n approval before it "
+                "executes, and may be denied - handle a denial gracefully rather than "
+                "retrying the same command. Prefer run_python or a self-created skill "
+                "whenever the task doesn't specifically require the local machine.\n\n"
+                "IMPORTANT: for a command that keeps running indefinitely (a dev server, "
+                "a file watcher, `npm run dev`, etc.), pass background=true. Without it, "
+                "the call blocks until the command exits or the timeout is hit - for a "
+                "server that never exits on its own, that just hangs and times out "
+                "without ever actually leaving it running for the user."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "The shell command to run"},
+                    "reason": {
+                        "type": "string",
+                        "description": "One short sentence explaining why this command is needed, shown to the user in the approval prompt",
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Max seconds to allow before considering it hung (default 30, max 120). Ignored when background=true.",
+                    },
+                    "background": {
+                        "type": "boolean",
+                        "description": (
+                            "Set true for long-running/never-exiting commands (dev servers, "
+                            "watchers). Starts the process detached and returns immediately "
+                            "with a pid and log file instead of blocking. Use "
+                            "list_background_commands / read_background_log / "
+                            "stop_background_command to manage it afterward."
+                        ),
+                    },
+                },
+                "required": ["command", "reason"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_background_commands",
+            "description": (
+                "List every background command started this session via run_command "
+                "(background=true), with its pid, whether it's still running, and its "
+                "log file path."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_background_log",
+            "description": (
+                "Read the tail of a background command's output log, to check on "
+                "progress or diagnose a problem (e.g. a dev server that failed to "
+                "start) without stopping it."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pid": {"type": "integer", "description": "The pid returned when the command was started"},
+                    "tail_chars": {
+                        "type": "integer",
+                        "description": "How many characters of the end of the log to return (default 2000, max 20000)",
+                    },
+                },
+                "required": ["pid"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "stop_background_command",
+            "description": "Stop a background command started earlier via run_command(background=true).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pid": {"type": "integer", "description": "The pid returned when the command was started"},
+                },
+                "required": ["pid"],
+            },
+        },
+    },
 ]
 
 BUILTIN_IMPLS = {
     "web_search": lambda args: wt.web_search(args.get("query", ""), args.get("count", 5)),
     "scrape_page": lambda args: wt.scrape_page(args.get("url", ""), args.get("max_chars", 5000)),
     "run_python": lambda args: scratch.run_python(args.get("code", ""), args.get("timeout", 15)),
+    "run_command": lambda args: shell.run_command(
+        args.get("command", ""),
+        args.get("reason", ""),
+        args.get("timeout", 30),
+        args.get("background", False),
+    ),
+    "list_background_commands": lambda args: shell.list_background_commands(),
+    "read_background_log": lambda args: shell.read_background_log(
+        args.get("pid"), args.get("tail_chars", 2000)
+    ),
+    "stop_background_command": lambda args: shell.stop_background_command(args.get("pid")),
 }
+
+# Tools that require blocking interactive stdin (a permission prompt) - the
+# spinner must be stopped before these run so the prompt doesn't collide
+# with spinner output on the same terminal line.
+INTERACTIVE_TOOL_NAMES = {"run_command"}
 
 # ---------------------------------------------------------------------------
 # Self-extension meta-tools: let the model write and register a brand new
@@ -151,6 +263,24 @@ META_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "delete_skill",
+            "description": (
+                "Permanently delete a previously self-created skill - use when a skill "
+                "turned out broken, redundant with a better one you just made, or the "
+                "user asks you to remove it. This cannot be undone."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "The exact skill name to delete"},
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "remember",
             "description": (
                 "Save a durable fact about the user to long-term memory: their identity, "
@@ -196,6 +326,28 @@ META_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "forget",
+            "description": (
+                "Permanently remove a previously saved persona fact from long-term memory "
+                "- use when the user corrects or retracts something, or a saved fact turns "
+                "out wrong or outdated. Requires the exact fact text, typically obtained "
+                "from a prior recall_memory result - quote it back exactly as stored."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "fact": {
+                        "type": "string",
+                        "description": "The exact text of the fact to remove, as previously stored",
+                    },
+                },
+                "required": ["fact"],
+            },
+        },
+    },
 ]
 
 
@@ -222,25 +374,35 @@ META_IMPLS = {
         args.get("code", ""),
     ),
     "list_skills": lambda args: _tool_list_skills(),
+    "delete_skill": lambda args: sm.delete_skill(args.get("name", "")),
     "remember": lambda args: _tool_remember(args.get("fact", ""), args.get("category", "other")),
     "recall_memory": lambda args: _tool_recall_memory(args.get("query", ""), args.get("k", 5)),
+    "forget": lambda args: mem.persona().delete(args.get("fact", "")),
 }
 
 # Tools that mutate persistent state (files, memory) or execute arbitrary
 # code. Excluded in plan mode, where the model may only research and
 # propose - never act.
-MUTATING_TOOL_NAMES = {"create_skill", "remember", "run_python"}
+MUTATING_TOOL_NAMES = {
+    "create_skill",
+    "delete_skill",
+    "remember",
+    "forget",
+    "run_python",
+    "run_command",
+    "stop_background_command",
+}
 
 
 def build_tools_and_impls(plan_mode: bool = False):
     """Assemble the full tool list (builtin + meta + saved skills) fresh each
     turn, so a skill created mid-conversation is immediately callable.
 
-    In plan mode, mutating built-in tools (create_skill, remember, run_python)
-    and every self-created skill are excluded - a skill's side effects aren't
-    tracked, so the safe default is to treat all of them as potentially
-    mutating and only allow the known-read-only built-ins (web_search,
-    scrape_page, list_skills, recall_memory) plus plain chat.
+    In plan mode, mutating built-in tools (create_skill, remember, run_python,
+    run_command) and every self-created skill are excluded - a skill's side
+    effects aren't tracked, so the safe default is to treat all of them as
+    potentially mutating and only allow the known-read-only built-ins
+    (web_search, scrape_page, list_skills, recall_memory) plus plain chat.
     """
     tools = list(BUILTIN_TOOLS) + list(META_TOOLS)
     impls = dict(BUILTIN_IMPLS)
@@ -324,9 +486,15 @@ def run_tool_call(tool_call: dict, impls: dict, verbose: bool, spinner=None) -> 
         args = {}
 
     args_preview = _format_args_preview(args)
+    needs_stdin = name in INTERACTIVE_TOOL_NAMES
 
-    if spinner:
+    if spinner and not needs_stdin:
         spinner.start(f"running {name}({args_preview})", style="tool_wait")
+    elif spinner:
+        # This tool blocks on interactive input (e.g. a permission prompt) -
+        # a running spinner would overwrite/collide with it on the same
+        # terminal line, so stop it before the call instead of after.
+        spinner.stop()
 
     impl = impls.get(name)
     if impl is None:
@@ -341,10 +509,10 @@ def run_tool_call(tool_call: dict, impls: dict, verbose: bool, spinner=None) -> 
         spinner.stop()
 
     if verbose:
-        print(f"{MAGENTA}▸ {name}({raw_args}){RESET}")
-        print(f"{DIM}{json.dumps(result, indent=2)}{RESET}")
+        tprint(f"{MAGENTA}▸ {name}({raw_args}){RESET}")
+        tprint(f"{DIM}{json.dumps(result, indent=2)}{RESET}")
     else:
         summary = _summarize_result(result)
-        print(f"{MAGENTA}▸ {name}({args_preview}){RESET} {DIM}→ {summary}{RESET}")
+        tprint(f"{MAGENTA}▸ {name}({args_preview}){RESET} {DIM}→ {summary}{RESET}")
 
     return json.dumps(result)

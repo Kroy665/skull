@@ -104,6 +104,9 @@ def create_skill(name: str, description: str, parameters: dict, code: str) -> di
 
 
 def delete_skill(name: str) -> dict:
+    if get_skill(name) is None:
+        return {"error": f"no such skill '{name}'"}
+
     index = [e for e in _load_index() if e["name"] != name]
     _save_index(index)
     shutil.rmtree(_skill_dir(name), ignore_errors=True)

@@ -9,6 +9,16 @@ computed by a background thread), so the read loop polls for it via
 `select()` with a short timeout and live-redraws if it changes - not just a
 one-time snapshot taken when the prompt starts.
 
+Bracketed paste mode is enabled while reading, so a pasted block (which the
+terminal wraps in ESC[200~ ... ESC[201~) is told apart from real keystrokes.
+Without this, a paste containing embedded newlines (common when the source
+text was itself line-wrapped) would have each newline byte treated exactly
+like pressing Enter - submitting the first line as a complete message and
+silently dropping/misrouting the rest to the *next* prompt call, one
+fragment at a time. Pasted newlines are joined with spaces instead, so a
+multi-line paste becomes one submitted message, matching a normal paste's
+intent.
+
 POSIX only (termios/tty) - falls back to plain input() if unavailable
 (e.g. on Windows, or when stdin isn't a real tty).
 """
@@ -34,6 +44,13 @@ CTRL_D = "\x04"
 TAB = "\t"
 ENTER = {"\r", "\n"}
 
+# Bracketed paste: enabling it makes the terminal wrap a pasted block in
+# these markers so it can be told apart from real keystrokes.
+ENABLE_BRACKETED_PASTE = "\033[?2004h"
+DISABLE_BRACKETED_PASTE = "\033[?2004l"
+PASTE_START = "200~"
+PASTE_END = "201~"
+
 POLL_INTERVAL_SECONDS = 0.15
 
 _ANSI_RE = re.compile(r"\033\[[0-9;]*[a-zA-Z]")
@@ -55,10 +72,31 @@ def _read_byte(fd) -> str:
     return os.read(fd, 1).decode(errors="replace")
 
 
+def _read_until_paste_end(fd) -> str:
+    """Read raw bytes until the bracketed-paste end marker (ESC[201~) is
+    seen, returning everything before it with embedded \\r/\\n joined by
+    spaces (a pasted block is semantically one block of text, not several
+    Enter-separated lines)."""
+    chars = []
+    marker = "\x1b[201~"
+    tail = ""
+    while True:
+        ch = _read_byte(fd)
+        tail = (tail + ch)[-len(marker):]
+        if tail == marker:
+            # Remove the marker chars already appended to `chars`.
+            del chars[-(len(marker) - 1):]
+            break
+        chars.append(ch)
+    text = "".join(chars)
+    return text.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+
+
 def _read_key_nonblocking(fd, timeout: float):
     """Wait up to `timeout` seconds for a keypress. Returns None on timeout
-    (no key available yet), or the resolved key token/char otherwise.
-    Arrow keys resolve to 'UP'/'DOWN'/'RIGHT'/'LEFT'."""
+    (no key available yet), a plain resolved key token/char, or a
+    ("PASTE", text) tuple for a bracketed-paste block. Arrow keys resolve to
+    'UP'/'DOWN'/'RIGHT'/'LEFT'."""
     ready, _, _ = select.select([fd], [], [], timeout)
     if not ready:
         return None
@@ -67,17 +105,32 @@ def _read_key_nonblocking(fd, timeout: float):
     if ch != "\x1b":
         return ch
 
-    # Escape sequence: expect '[' then a letter. These arrive as a fast,
-    # atomic burst right after ESC, so a short bounded wait is enough to
-    # distinguish a real arrow key from a lone ESC keypress.
+    # Escape sequence: expect '[' then more. These arrive as a fast, atomic
+    # burst right after ESC, so a short bounded wait is enough to distinguish
+    # a real arrow key (or paste marker) from a lone ESC keypress.
     ready, _, _ = select.select([fd], [], [], 0.05)
     if not ready:
         return "ESC"
     seq = _read_byte(fd)
     if seq != "[":
         return ""  # unrecognized escape - ignore
+
     code = _read_byte(fd)
-    return {"A": "UP", "B": "DOWN", "C": "RIGHT", "D": "LEFT"}.get(code, "")
+    if code in ("A", "B", "C", "D"):
+        return {"A": "UP", "B": "DOWN", "C": "RIGHT", "D": "LEFT"}[code]
+
+    # Might be the start of a longer sequence like the paste marker
+    # (ESC[200~). Read the rest of this escape sequence (up to '~').
+    rest = code
+    while rest and rest[-1] not in "~ABCD" and len(rest) < 8:
+        ready, _, _ = select.select([fd], [], [], 0.05)
+        if not ready:
+            break
+        rest += _read_byte(fd)
+
+    if rest == PASTE_START:
+        return ("PASTE", _read_until_paste_end(fd))
+    return ""  # unrecognized escape sequence - ignore
 
 
 def prompt_with_ghost(prompt_label: str, get_suggestion, history: list = None) -> str:
@@ -140,6 +193,8 @@ def prompt_with_ghost(prompt_label: str, get_suggestion, history: list = None) -
 
     try:
         tty.setraw(fd)
+        sys.stdout.write(ENABLE_BRACKETED_PASTE)
+        sys.stdout.flush()
         redraw()
         while True:
             key = _read_key_nonblocking(fd, POLL_INTERVAL_SECONDS)
@@ -154,12 +209,21 @@ def prompt_with_ghost(prompt_label: str, get_suggestion, history: list = None) -
                         redraw()
                 continue
 
+            if isinstance(key, tuple) and key[0] == "PASTE":
+                pasted_text = key[1]
+                if pasted_text:
+                    history_index = None
+                    for ch in pasted_text:
+                        buf.insert(cursor, ch)
+                        cursor += 1
+                    redraw()
+                continue
+
             if key in ENTER:
                 break
             if key in (CTRL_C, CTRL_D):
                 sys.stdout.write("\r\n")
                 sys.stdout.flush()
-                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
                 raise (KeyboardInterrupt if key == CTRL_C else EOFError)
             if key in BACKSPACE:
                 if cursor > 0:
@@ -216,6 +280,8 @@ def prompt_with_ghost(prompt_label: str, get_suggestion, history: list = None) -
             cursor += 1
             redraw()
     finally:
+        sys.stdout.write(DISABLE_BRACKETED_PASTE)
+        sys.stdout.flush()
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
     sys.stdout.write("\r\n")

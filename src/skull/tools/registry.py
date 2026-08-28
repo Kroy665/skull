@@ -6,6 +6,7 @@ import json
 
 from skull.config import DIM, MAGENTA, RESET
 from skull.storage import store as mem
+from skull.tools import files
 from skull.tools import shell
 from skull.tools import skills as sm
 from skull.tools import sandbox as scratch
@@ -181,6 +182,126 @@ BUILTIN_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": (
+                "Read a file from the user's own machine, anywhere on the filesystem. "
+                "Read-only, no approval needed."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Path to the file (~ is expanded)"},
+                    "max_chars": {
+                        "type": "integer",
+                        "description": "Max characters to return (default 20000, max 200000)",
+                    },
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_directory",
+            "description": "List the contents of a directory on the user's own machine. Read-only, no approval needed.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Directory path (default '.', ~ is expanded)"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": (
+                "Create, overwrite, or append to a file on the user's own machine, anywhere "
+                "on the filesystem. Requires the user's explicit interactive y/n approval "
+                "every time, since this can destroy or corrupt an existing file. Shows the "
+                "user the path and a preview of the content before asking."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Path to the file (~ is expanded)"},
+                    "content": {"type": "string", "description": "The content to write"},
+                    "mode": {
+                        "type": "string",
+                        "description": "'overwrite' (default) replaces the whole file, 'append' adds to the end",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "One short sentence explaining why, shown in the approval prompt",
+                    },
+                },
+                "required": ["path", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "sandbox_read_file",
+            "description": (
+                "Read a file from the isolated E2B sandbox filesystem (not the user's "
+                "machine - see read_file for that). No approval needed, same trust level "
+                "as run_python."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Path to the file inside the sandbox"},
+                    "max_chars": {
+                        "type": "integer",
+                        "description": "Max characters to return (default 20000, max 200000)",
+                    },
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "sandbox_write_file",
+            "description": (
+                "Write a file into the isolated E2B sandbox filesystem (not the user's "
+                "machine - see write_file for that). No approval needed, same trust level "
+                "as run_python. Creates parent directories as needed; overwrites if the "
+                "file already exists. Files persist across run_python calls within the "
+                "same session but are reset at session start."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Path to the file inside the sandbox"},
+                    "content": {"type": "string", "description": "The content to write"},
+                },
+                "required": ["path", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "sandbox_list_directory",
+            "description": "List the contents of a directory inside the E2B sandbox filesystem.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Directory path inside the sandbox (default '/')"},
+                },
+                "required": [],
+            },
+        },
+    },
 ]
 
 BUILTIN_IMPLS = {
@@ -198,12 +319,27 @@ BUILTIN_IMPLS = {
         args.get("pid"), args.get("tail_chars", 2000)
     ),
     "stop_background_command": lambda args: shell.stop_background_command(args.get("pid")),
+    "read_file": lambda args: files.read_file(args.get("path", ""), args.get("max_chars", 20000)),
+    "list_directory": lambda args: files.list_directory(args.get("path", ".")),
+    "write_file": lambda args: files.write_file(
+        args.get("path", ""),
+        args.get("content", ""),
+        args.get("mode", "overwrite"),
+        args.get("reason", ""),
+    ),
+    "sandbox_read_file": lambda args: scratch.sandbox_read_file(
+        args.get("path", ""), args.get("max_chars", 20000)
+    ),
+    "sandbox_write_file": lambda args: scratch.sandbox_write_file(
+        args.get("path", ""), args.get("content", "")
+    ),
+    "sandbox_list_directory": lambda args: scratch.sandbox_list_directory(args.get("path", "/")),
 }
 
 # Tools that require blocking interactive stdin (a permission prompt) - the
 # spinner must be stopped before these run so the prompt doesn't collide
 # with spinner output on the same terminal line.
-INTERACTIVE_TOOL_NAMES = {"run_command"}
+INTERACTIVE_TOOL_NAMES = {"run_command", "write_file"}
 
 # ---------------------------------------------------------------------------
 # Self-extension meta-tools: let the model write and register a brand new
@@ -391,6 +527,8 @@ MUTATING_TOOL_NAMES = {
     "run_python",
     "run_command",
     "stop_background_command",
+    "write_file",
+    "sandbox_write_file",
 }
 
 
@@ -398,11 +536,14 @@ def build_tools_and_impls(plan_mode: bool = False):
     """Assemble the full tool list (builtin + meta + saved skills) fresh each
     turn, so a skill created mid-conversation is immediately callable.
 
-    In plan mode, mutating built-in tools (create_skill, remember, run_python,
-    run_command) and every self-created skill are excluded - a skill's side
-    effects aren't tracked, so the safe default is to treat all of them as
-    potentially mutating and only allow the known-read-only built-ins
-    (web_search, scrape_page, list_skills, recall_memory) plus plain chat.
+    In plan mode, mutating built-in tools (create_skill, delete_skill,
+    remember, forget, run_python, run_command, stop_background_command,
+    write_file, sandbox_write_file) and every self-created skill are
+    excluded - a skill's side effects aren't tracked, so the safe default is
+    to treat all of them as potentially mutating and only allow the
+    known-read-only built-ins (web_search, scrape_page, list_skills,
+    recall_memory, read_file, list_directory, sandbox_read_file,
+    sandbox_list_directory) plus plain chat.
     """
     tools = list(BUILTIN_TOOLS) + list(META_TOOLS)
     impls = dict(BUILTIN_IMPLS)

@@ -16,6 +16,7 @@ from e2b_code_interpreter import Sandbox
 
 RUN_TIMEOUT_SECONDS = 15
 MAX_OUTPUT_CHARS = 4000
+MAX_FILE_READ_CHARS = 20000
 
 _sandbox = None
 _sandbox_lock = threading.Lock()
@@ -89,3 +90,59 @@ def run_python(code: str, timeout: int = RUN_TIMEOUT_SECONDS) -> dict:
         result["results"] = [str(r) for r in execution.results]
 
     return result
+
+
+def sandbox_read_file(path: str, max_chars: int = MAX_FILE_READ_CHARS) -> dict:
+    if not path or not path.strip():
+        return {"error": "no path provided"}
+    max_chars = max(200, min(int(max_chars), 200000))
+
+    try:
+        sbx = _get_sandbox()
+    except RuntimeError as e:
+        return {"error": str(e)}
+
+    try:
+        text = sbx.files.read(path)
+    except Exception as e:
+        return {"error": f"failed to read {path} from sandbox: {e}"}
+
+    truncated = len(text) > max_chars
+    return {"path": path, "content": text[:max_chars], "truncated": truncated}
+
+
+def sandbox_write_file(path: str, content: str) -> dict:
+    if not path or not path.strip():
+        return {"error": "no path provided"}
+
+    try:
+        sbx = _get_sandbox()
+    except RuntimeError as e:
+        return {"error": str(e)}
+
+    try:
+        sbx.files.write(path, content)
+    except Exception as e:
+        return {"error": f"failed to write {path} in sandbox: {e}"}
+
+    return {"status": "written", "path": path, "bytes": len(content)}
+
+
+def sandbox_list_directory(path: str = "/") -> dict:
+    try:
+        sbx = _get_sandbox()
+    except RuntimeError as e:
+        return {"error": str(e)}
+
+    try:
+        entries = sbx.files.list(path or "/")
+    except Exception as e:
+        return {"error": f"failed to list {path} in sandbox: {e}"}
+
+    return {
+        "path": path,
+        "entries": [
+            {"name": e.name, "type": "directory" if e.type.value == "dir" else "file"}
+            for e in entries
+        ],
+    }

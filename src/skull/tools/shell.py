@@ -21,8 +21,7 @@ import threading
 import time
 from pathlib import Path
 
-from skull.config import BOLD, DIM, RESET, YELLOW
-from skull.ui.output import tprint
+from skull.tools.permission import ask_permission
 
 RUN_TIMEOUT_SECONDS = 30
 MAX_OUTPUT_CHARS = 4000
@@ -39,27 +38,6 @@ def _truncate(text: str) -> tuple:
     if len(text) <= MAX_OUTPUT_CHARS:
         return text, False
     return text[:MAX_OUTPUT_CHARS], True
-
-
-def _ask_permission(command: str, reason: str, background: bool) -> bool:
-    # A newline (not just \r) guarantees this starts on a fresh, empty line
-    # regardless of anything printed just before (e.g. a spinner, or a long
-    # line that wrapped across multiple terminal rows).
-    tprint()
-    suffix = " in the background" if background else ""
-    tprint(f"{YELLOW}{BOLD}The model wants to run a shell command{suffix}:{RESET}")
-    for line in command.splitlines():
-        tprint(f"{BOLD}  {line}{RESET}")
-    if reason:
-        tprint(f"{DIM}  reason: {reason}{RESET}")
-    tprint()
-    while True:
-        answer = input(f"{YELLOW}Allow this? [y/N] {RESET}").strip().lower()
-        if answer in ("y", "yes"):
-            return True
-        if answer in ("", "n", "no"):
-            return False
-        tprint("Please answer y or n.")
 
 
 def _start_background(command: str) -> dict:
@@ -111,7 +89,8 @@ def run_command(
         return {"error": "no command provided"}
     timeout = max(1, min(int(timeout), 120))
 
-    if not _ask_permission(command, reason, background):
+    action = "run a shell command in the background" if background else "run a shell command"
+    if not ask_permission(action, [command], reason):
         return {"error": "denied by user", "denied": True}
 
     if background:

@@ -1,0 +1,23 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Secrets
+.env
+
+# Personal conversation history / persona data
+memory/
+
+# Self-created skills - accumulate per-user, ship the app with none
+skills/*
+!skills/.gitkeep
+
+# Throwaway test code, wiped every session start
+scratch/

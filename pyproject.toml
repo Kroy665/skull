@@ -1,0 +1,14 @@
+[project]
+name = "qwen-llm"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "requests",
+    "python-dotenv",
+    "beautifulsoup4",
+    "sentence-transformers",
+    "numpy",
+    "e2b-code-interpreter",
+]

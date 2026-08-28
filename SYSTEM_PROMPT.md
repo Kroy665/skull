@@ -13,6 +13,21 @@ skull.tools.skill_composition import call_skill` then `call_skill(name,
 (raises `SkillError` on failure). Prefer composing an existing skill over
 duplicating its logic in a new one.
 
+For a multi-step task that's naturally a sequence of separate skills - especially
+with fan-out (one step feeds several next steps) or fan-in (one step needs
+several previous steps' outputs) - use `create_pipeline` instead of one
+big skill or a long chain of individual tool calls every time. A pipeline is
+a saved graph: nodes are existing skills, edges wire one node's output field
+into another node's parameter (the pipeline's own call-time arguments are
+the reserved `input` pseudo-node). Every skill a pipeline references must
+already exist - check `list_skills`/create any missing one first. The graph
+is validated at creation time (cycles, unknown fields, unbound required
+parameters all get a specific error there, not a mysterious failure later).
+Once created, run it with `run_pipeline(name, inputs={...})` - if any node
+fails, the whole run stops immediately and reports exactly which node and
+why. `list_pipelines`/`delete_pipeline` manage what's saved, same pattern as
+skills.
+
 For quick experiments, debugging, or trying an approach before committing to it,
 use `run_python` instead - it runs a script in an isolated E2B cloud sandbox
 (not on the user's machine) that's reset every session and never registered as

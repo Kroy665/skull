@@ -19,7 +19,15 @@ mode.
   immediately, instead of hanging until timeout; manage it with
   `list_background_commands`, `read_background_log`, `stop_background_command`
 - **Write its own tools at runtime** (`create_skill`/`delete_skill`) — once
-  created, a skill is saved to `skills/` and reused in every future session
+  created, a skill is saved to `skills/` and reused in every future session.
+  Skills can call each other (`call_skill`) instead of duplicating logic
+- **Chain skills into a saved DAG** (`create_pipeline`/`run_pipeline`/
+  `list_pipelines`/`delete_pipeline`) — nodes are existing skills, edges wire
+  one node's output field into another's parameter, with fan-out (one output
+  feeding several next steps) and fan-in (one step needing several previous
+  outputs) both supported. Validated at creation time (cycles, unbound
+  parameters, unknown fields); if a node fails at run time, the whole run
+  stops and reports exactly which node and why
 - **Long-term memory** (`remember`/`forget`/`recall_memory`) — remembers
   facts about you and past conversations across sessions, using local
   embeddings (no external API needed for this)
@@ -94,6 +102,8 @@ src/skull/
         web.py                  web_search / scrape_page
         sandbox.py               E2B sandbox execution for run_python + sandbox file I/O
         skills.py                self-created skill storage (skills/<name>/)
+        skill_composition.py      call_skill() - lets a skill call another skill
+        pipeline.py               skill DAGs: validation, topological execution (pipelines/<name>/)
         shell.py                 run_command (gated) + background process management
         files.py                 local read_file/write_file/list_directory
         permission.py            shared interactive y/n approval prompt
@@ -106,10 +116,11 @@ src/skull/
         output.py                 terminal-safe print (explicit \r\n, avoids OPOST quirks)
 SYSTEM_PROMPT.md            the model's system prompt (editable without touching code)
 skills/                      self-created skills (starts empty)
+pipelines/                    self-created skill pipelines/DAGs (starts empty)
 memory/                      persona facts + conversation log (starts empty, gitignored)
 ```
 
-`skills/` and `memory/` live at the project root (not inside `src/skull/`)
-since they're per-user runtime state, not part of the installed package.
-Both are gitignored — they accumulate as you use the app, not something to
-commit or ship.
+`skills/`, `pipelines/`, and `memory/` live at the project root (not inside
+`src/skull/`) since they're per-user runtime state, not part of the
+installed package. All three are gitignored — they accumulate as you use
+the app, not something to commit or ship.

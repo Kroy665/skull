@@ -19,5 +19,9 @@ memory/
 skills/*
 !skills/.gitkeep
 
+# Self-created pipelines - same treatment as skills/
+pipelines/*
+!pipelines/.gitkeep
+
 # Throwaway test code, wiped every session start
 scratch/

@@ -7,6 +7,7 @@ import json
 from skull.config import DIM, MAGENTA, RESET
 from skull.storage import store as mem
 from skull.tools import files
+from skull.tools import pipeline as pl
 from skull.tools import shell
 from skull.tools import skills as sm
 from skull.tools import sandbox as scratch
@@ -490,6 +491,107 @@ META_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_pipeline",
+            "description": (
+                "Create a saved DAG ('pipeline') that chains existing skills together, "
+                "with explicit data flow between them - use this instead of writing one "
+                "big skill when a task is naturally a sequence of separate steps, "
+                "especially with fan-out (one step's output feeds several next steps) or "
+                "fan-in (one step needs outputs from several previous steps).\n\n"
+                "`nodes` is an object mapping a node id you choose (e.g. 'fetch', "
+                "'extract') to {\"type\": \"skill\", \"skill\": \"<existing skill name>\", "
+                "\"params\": {<literal fixed arguments, optional>}}. Every skill referenced "
+                "must already exist - check with list_skills first, and create any missing "
+                "one with create_skill before building the pipeline around it.\n\n"
+                "`edges` is a list of {\"from\": \"<node_id>.<field>\", \"to\": "
+                "\"<node_id>.<param>\"} - each one wires one node's output field into "
+                "another node's parameter. The pipeline's own call-time arguments are "
+                "available as the reserved pseudo-node 'input' (e.g. "
+                "{\"from\": \"input.url\", \"to\": \"fetch.url\"}). Every node parameter must "
+                "be set by EXACTLY ONE source - either a literal in that node's 'params', "
+                "or exactly one incoming edge - never both, never neither. The graph is "
+                "validated at creation time (no cycles, no unknown nodes/fields, no "
+                "unbound required parameters) and will report the specific problem rather "
+                "than silently failing later."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "lowercase_snake_case identifier, e.g. 'scrape_and_summarize'",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "One sentence describing what the pipeline does.",
+                    },
+                    "nodes": {
+                        "type": "object",
+                        "description": (
+                            'Object mapping node id -> {"type":"skill","skill":"<name>",'
+                            '"params":{...literal args...}}'
+                        ),
+                    },
+                    "edges": {
+                        "type": "array",
+                        "description": 'List of {"from":"<node>.<field>","to":"<node>.<param>"}',
+                    },
+                },
+                "required": ["name", "description", "nodes", "edges"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_pipelines",
+            "description": "List all previously created skill pipelines available to run.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_pipeline",
+            "description": (
+                "Run a previously created pipeline by name, passing whatever inputs it "
+                "needs (these become the reserved 'input' node's fields, per how the "
+                "pipeline's edges reference them). Executes every node in dependency "
+                "order; if any node fails, the whole run stops immediately and reports "
+                "which node failed and why - nothing downstream of a failed node runs. "
+                "Returns the output of every terminal node (nodes nothing else consumes) "
+                "plus a full per-node execution trace."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "The pipeline's name"},
+                    "inputs": {
+                        "type": "object",
+                        "description": "Keyword arguments for the pipeline's 'input' pseudo-node",
+                    },
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_pipeline",
+            "description": "Permanently delete a previously created pipeline. This cannot be undone.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "The exact pipeline name to delete"},
+                },
+                "required": ["name"],
+            },
+        },
+    },
 ]
 
 
@@ -520,6 +622,15 @@ META_IMPLS = {
     "remember": lambda args: _tool_remember(args.get("fact", ""), args.get("category", "other")),
     "recall_memory": lambda args: _tool_recall_memory(args.get("query", ""), args.get("k", 5)),
     "forget": lambda args: mem.persona().delete(args.get("fact", "")),
+    "create_pipeline": lambda args: pl.create_pipeline(
+        args.get("name", ""),
+        args.get("description", ""),
+        args.get("nodes", {}),
+        args.get("edges", []),
+    ),
+    "list_pipelines": lambda args: {"pipelines": pl.list_pipelines()},
+    "run_pipeline": lambda args: pl.run_pipeline(args.get("name", ""), **(args.get("inputs") or {})),
+    "delete_pipeline": lambda args: pl.delete_pipeline(args.get("name", "")),
 }
 
 # Tools that mutate persistent state (files, memory) or execute arbitrary
@@ -535,6 +646,13 @@ MUTATING_TOOL_NAMES = {
     "stop_background_command",
     "write_file",
     "sandbox_write_file",
+    "create_pipeline",
+    "delete_pipeline",
+    # run_pipeline's own effects are opaque (a node can be any skill, whose
+    # side effects aren't tracked - same reasoning as self-created skills
+    # being excluded wholesale in plan mode), so it's treated as mutating
+    # even though it has no direct side effect of its own.
+    "run_pipeline",
 }
 
 
@@ -544,12 +662,14 @@ def build_tools_and_impls(plan_mode: bool = False):
 
     In plan mode, mutating built-in tools (create_skill, delete_skill,
     remember, forget, run_python, run_command, stop_background_command,
-    write_file, sandbox_write_file) and every self-created skill are
-    excluded - a skill's side effects aren't tracked, so the safe default is
-    to treat all of them as potentially mutating and only allow the
-    known-read-only built-ins (web_search, scrape_page, list_skills,
-    recall_memory, read_file, list_directory, sandbox_read_file,
-    sandbox_list_directory) plus plain chat.
+    write_file, sandbox_write_file, create_pipeline, delete_pipeline,
+    run_pipeline) and every self-created skill are excluded - a skill's
+    (and by extension a pipeline node's) side effects aren't tracked, so the
+    safe default is to treat all of them as potentially mutating and only
+    allow the known-read-only built-ins (web_search, scrape_page,
+    list_skills, recall_memory, read_file, list_directory,
+    sandbox_read_file, sandbox_list_directory, list_pipelines) plus plain
+    chat.
     """
     tools = list(BUILTIN_TOOLS) + list(META_TOOLS)
     impls = dict(BUILTIN_IMPLS)
@@ -608,6 +728,8 @@ def _summarize_result(result) -> str:
             return f"{len(result['results'])} result(s)"
         if "skills" in result and isinstance(result["skills"], list):
             return f"{len(result['skills'])} skill(s)"
+        if "pipelines" in result and isinstance(result["pipelines"], list):
+            return f"{len(result['pipelines'])} pipeline(s)"
         if "status" in result:
             extra = f" ({result['name']})" if "name" in result else ""
             return f"{result['status']}{extra}"

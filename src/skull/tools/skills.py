@@ -8,6 +8,9 @@ Each skill lives in its own directory:
 skills/index.json is a lightweight registry (name, description, parameters)
 kept in sync with each skill's SKILL.md, used for fast tool-list assembly
 without re-reading every file on disk.
+
+skills/ lives at the project root (user data, not part of the installed
+package) - see skull.config.SKILLS_DIR.
 """
 
 import importlib.util
@@ -18,7 +21,8 @@ import sys
 import traceback
 from pathlib import Path
 
-SKILLS_DIR = Path(__file__).parent / "skills"
+from skull.config import SKILLS_DIR
+
 INDEX_PATH = SKILLS_DIR / "index.json"
 
 NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
@@ -31,6 +35,7 @@ def _load_index() -> list:
 
 
 def _save_index(index: list) -> None:
+    SKILLS_DIR.mkdir(exist_ok=True)
     INDEX_PATH.write_text(json.dumps(index, indent=2) + "\n")
 
 

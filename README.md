@@ -1,4 +1,4 @@
-# Qwen Terminal Chat
+# skull
 
 A terminal chat client for a Qwen model endpoint, with tool calling, a
 self-extending skill system, long-term memory, and a plan/auto execution
@@ -68,17 +68,30 @@ Tab or Right-arrow (on an empty line) accepts an inline suggestion.
 ## Project layout
 
 ```
-chat.py              entry point / main loop
-skills_manager.py     self-created skill storage (skills/<name>/)
-memory_store.py       local vector store for persona facts + conversation history
-web_tools.py           web_search / scrape_page implementations
-scratch_runner.py      E2B sandbox execution for run_python
-suggestion.py           background "next question" prediction
-ghost_input.py          raw-terminal input with ghost text + history
-SYSTEM_PROMPT.md        the model's system prompt (editable without touching code)
-skills/                 self-created skills (starts empty)
-memory/                 persona facts + conversation log (starts empty, gitignored)
+chat.py                    thin entry point (uv run chat.py)
+src/skull/
+    config.py               env vars, paths, terminal colors
+    core/
+        client.py            streaming Qwen chat-completions calls
+        session.py            turn-handling loop + interactive REPL
+        memory_context.py      memory retrieval, plan-mode instructions
+    tools/
+        registry.py            tool schemas + dispatch, plan-mode filtering
+        web.py                  web_search / scrape_page
+        sandbox.py               E2B sandbox execution for run_python
+        skills.py                self-created skill storage (skills/<name>/)
+    storage/
+        store.py                 local vector store (persona facts + conversation history)
+    ui/
+        spinner.py               per-action loading animations
+        ghost_input.py            raw-terminal input with ghost text + history
+        suggestion.py             background "next question" prediction
+SYSTEM_PROMPT.md            the model's system prompt (editable without touching code)
+skills/                      self-created skills (starts empty)
+memory/                      persona facts + conversation log (starts empty, gitignored)
 ```
 
-`skills/` and `memory/` are gitignored — they're per-user state that
-accumulates as you use the app, not something to commit or ship.
+`skills/` and `memory/` live at the project root (not inside `src/skull/`)
+since they're per-user runtime state, not part of the installed package.
+Both are gitignored — they accumulate as you use the app, not something to
+commit or ship.

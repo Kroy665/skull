@@ -1,0 +1,350 @@
+"""Tool schemas the model sees, dispatch to their Python implementations, and
+assembly of the full tool list (built-in + meta + self-created skills) with
+plan-mode filtering."""
+
+import json
+
+from skull.config import DIM, MAGENTA, RESET
+from skull.storage import store as mem
+from skull.tools import skills as sm
+from skull.tools import sandbox as scratch
+from skull.tools import web as wt
+
+# ---------------------------------------------------------------------------
+# Built-in tools: always available (unless withheld by plan mode).
+# ---------------------------------------------------------------------------
+
+BUILTIN_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": (
+                "Search the web (DuckDuckGo) and return a list of matching pages "
+                "(title, url, snippet). Use this to find current information or "
+                "URLs to look up in more detail with scrape_page."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"},
+                    "count": {
+                        "type": "integer",
+                        "description": "Number of results to return (1-15, default 5)",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "scrape_page",
+            "description": (
+                "Fetch a web page by URL and return its readable text content "
+                "(scripts, styles, and nav/header/footer chrome stripped out). "
+                "Use this to read the actual content of a page found via web_search."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "Full page URL to fetch"},
+                    "max_chars": {
+                        "type": "integer",
+                        "description": "Max characters of text to return (default 5000)",
+                    },
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_python",
+            "description": (
+                "Run a throwaway Python snippet in an isolated E2B cloud sandbox to test "
+                "an approach, debug logic, or inspect data - separate from create_skill, "
+                "which is for saving something reusable. The sandbox is fully isolated from "
+                "the local machine (no access to local files, network state, or credentials) "
+                "and persists variables/state across calls within one session, but is reset "
+                "at the start of every new session. Use print() to see output. Use this to "
+                "try something out BEFORE turning it into a skill with create_skill."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": {"type": "string", "description": "Python source to run as a script"},
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Max seconds to allow (default 15, max 60)",
+                    },
+                },
+                "required": ["code"],
+            },
+        },
+    },
+]
+
+BUILTIN_IMPLS = {
+    "web_search": lambda args: wt.web_search(args.get("query", ""), args.get("count", 5)),
+    "scrape_page": lambda args: wt.scrape_page(args.get("url", ""), args.get("max_chars", 5000)),
+    "run_python": lambda args: scratch.run_python(args.get("code", ""), args.get("timeout", 15)),
+}
+
+# ---------------------------------------------------------------------------
+# Self-extension meta-tools: let the model write and register a brand new
+# Python tool at runtime when none of the existing tools (built-in or
+# previously self-created) can solve the task. Saved skills persist in
+# skills/ and are auto-loaded as regular tools on every future run.
+# ---------------------------------------------------------------------------
+
+META_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "create_skill",
+            "description": (
+                "Create a brand new reusable Python tool ('skill') when no existing tool "
+                "can solve the task. The code must define a top-level function "
+                "`run(**kwargs)` that returns a JSON-serializable value. Standard library "
+                "and already-installed third-party packages (requests, etc.) are available. "
+                "The skill is saved to disk and immediately becomes callable, in this "
+                "session and every future one."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "lowercase_snake_case identifier, e.g. 'count_vowels'",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "One sentence describing what the skill does, for future tool listings.",
+                    },
+                    "parameters": {
+                        "type": "object",
+                        "description": (
+                            "JSON-schema object describing run()'s keyword arguments, e.g. "
+                            '{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}'
+                        ),
+                    },
+                    "code": {
+                        "type": "string",
+                        "description": "Full Python source defining `def run(**kwargs): ...`",
+                    },
+                },
+                "required": ["name", "description", "parameters", "code"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_skills",
+            "description": "List all previously self-created skills available to call.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "remember",
+            "description": (
+                "Save a durable fact about the user to long-term memory: their identity, "
+                "role, preferences, behavior patterns, opinions, or anything distinctive "
+                "about them worth recalling in future conversations. Use whenever the user "
+                "reveals something about themselves, not just when explicitly asked to "
+                "remember - this is how you build a persistent persona/knowledge base of "
+                "the user over time."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "fact": {
+                        "type": "string",
+                        "description": "The fact to remember, written as a clear standalone statement.",
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "One of: identity, preference, behavior, project, opinion, other",
+                    },
+                },
+                "required": ["fact"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "recall_memory",
+            "description": (
+                "Search long-term memory (past conversations and saved persona facts) for "
+                "anything relevant to a query. Relevant memory is already auto-injected each "
+                "turn, but use this to dig deeper on a specific topic or when you suspect "
+                "there's more history than what's already shown."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "What to search memory for"},
+                    "k": {"type": "integer", "description": "Max results per store (default 5)"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+]
+
+
+def _tool_list_skills() -> dict:
+    return {"skills": sm.list_skills()}
+
+
+def _tool_remember(fact: str, category: str = "other") -> dict:
+    return mem.persona().add(fact, {"category": category})
+
+
+def _tool_recall_memory(query: str, k: int = 5) -> dict:
+    return {
+        "persona": mem.persona().search(query, k=k),
+        "conversations": mem.conversations().search(query, k=k),
+    }
+
+
+META_IMPLS = {
+    "create_skill": lambda args: sm.create_skill(
+        args.get("name", ""),
+        args.get("description", ""),
+        args.get("parameters", {}),
+        args.get("code", ""),
+    ),
+    "list_skills": lambda args: _tool_list_skills(),
+    "remember": lambda args: _tool_remember(args.get("fact", ""), args.get("category", "other")),
+    "recall_memory": lambda args: _tool_recall_memory(args.get("query", ""), args.get("k", 5)),
+}
+
+# Tools that mutate persistent state (files, memory) or execute arbitrary
+# code. Excluded in plan mode, where the model may only research and
+# propose - never act.
+MUTATING_TOOL_NAMES = {"create_skill", "remember", "run_python"}
+
+
+def build_tools_and_impls(plan_mode: bool = False):
+    """Assemble the full tool list (builtin + meta + saved skills) fresh each
+    turn, so a skill created mid-conversation is immediately callable.
+
+    In plan mode, mutating built-in tools (create_skill, remember, run_python)
+    and every self-created skill are excluded - a skill's side effects aren't
+    tracked, so the safe default is to treat all of them as potentially
+    mutating and only allow the known-read-only built-ins (web_search,
+    scrape_page, list_skills, recall_memory) plus plain chat.
+    """
+    tools = list(BUILTIN_TOOLS) + list(META_TOOLS)
+    impls = dict(BUILTIN_IMPLS)
+    impls.update(META_IMPLS)
+
+    if plan_mode:
+        tools = [t for t in tools if t["function"]["name"] not in MUTATING_TOOL_NAMES]
+        impls = {k: v for k, v in impls.items() if k not in MUTATING_TOOL_NAMES}
+        return tools, impls
+
+    for entry in sm.list_skills():
+        name = entry["name"]
+        tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": entry["description"],
+                    "parameters": entry.get("parameters") or {"type": "object", "properties": {}},
+                },
+            }
+        )
+        impls[name] = (lambda args, _name=name: sm.run_skill(_name, args))
+
+    return tools, impls
+
+
+def _is_valid_json(text) -> bool:
+    if not text:
+        return True  # empty/None arguments are fine (treated as {})
+    try:
+        json.loads(text)
+        return True
+    except (json.JSONDecodeError, TypeError):
+        return False
+
+
+def _format_args_preview(args: dict, max_len: int = 60) -> str:
+    parts = []
+    for k, v in args.items():
+        v_str = json.dumps(v) if not isinstance(v, str) else v
+        v_str = v_str.replace("\n", "\\n").replace("\r", "")
+        if len(v_str) > 40:
+            v_str = v_str[:40] + "…"
+        parts.append(f"{k}={v_str}")
+    preview = ", ".join(parts)
+    return preview if len(preview) <= max_len else preview[:max_len] + "…"
+
+
+def _summarize_result(result) -> str:
+    """One-line human summary of a tool result, for the collapsed default view."""
+    if isinstance(result, dict):
+        if "error" in result:
+            return f"error: {str(result['error'])[:80]}"
+        if "results" in result and isinstance(result["results"], list):
+            return f"{len(result['results'])} result(s)"
+        if "skills" in result and isinstance(result["skills"], list):
+            return f"{len(result['skills'])} skill(s)"
+        if "status" in result:
+            extra = f" ({result['name']})" if "name" in result else ""
+            return f"{result['status']}{extra}"
+        if "text" in result and isinstance(result["text"], str):
+            n = len(result["text"])
+            return f"fetched {n} chars" + (" (truncated)" if result.get("truncated") else "")
+        if "result" in result:
+            return json.dumps(result["result"])[:80]
+        if "stdout" in result:
+            out = result["stdout"].strip().splitlines()
+            first_line = out[0] if out else "(no output)"
+            return first_line[:80]
+    text = json.dumps(result)
+    return text[:80] + ("…" if len(text) > 80 else "")
+
+
+def run_tool_call(tool_call: dict, impls: dict, verbose: bool, spinner=None) -> str:
+    name = tool_call["function"]["name"]
+    raw_args = tool_call["function"].get("arguments") or "{}"
+    try:
+        args = json.loads(raw_args)
+    except json.JSONDecodeError:
+        args = {}
+
+    args_preview = _format_args_preview(args)
+
+    if spinner:
+        spinner.start(f"running {name}({args_preview})", style="tool_wait")
+
+    impl = impls.get(name)
+    if impl is None:
+        result = {"error": f"unknown tool '{name}'"}
+    else:
+        try:
+            result = impl(args)
+        except Exception as e:
+            result = {"error": str(e)}
+
+    if spinner:
+        spinner.stop()
+
+    if verbose:
+        print(f"{MAGENTA}▸ {name}({raw_args}){RESET}")
+        print(f"{DIM}{json.dumps(result, indent=2)}{RESET}")
+    else:
+        summary = _summarize_result(result)
+        print(f"{MAGENTA}▸ {name}({args_preview}){RESET} {DIM}→ {summary}{RESET}")
+
+    return json.dumps(result)

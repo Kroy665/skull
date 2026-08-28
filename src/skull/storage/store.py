@@ -4,7 +4,7 @@ Embeddings are computed locally (sentence-transformers, all-MiniLM-L6-v2) so
 this works fully offline with no dependency on the Qwen endpoint (which does
 not expose an embeddings API).
 
-Storage layout (memory/):
+Storage layout (memory/, at the project root - see skull.config.MEMORY_DIR):
     conversations.jsonl / conversations.npy  - every auto-logged chat turn
     persona.jsonl        / persona.npy       - curated facts about the user
                                                 (identity, preferences, behavior)
@@ -19,11 +19,11 @@ history will hit.
 import json
 import os
 import threading
-from pathlib import Path
 
 import numpy as np
 
-MEMORY_DIR = Path(__file__).parent / "memory"
+from skull.config import MEMORY_DIR
+
 EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
 
 _model = None

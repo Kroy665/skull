@@ -7,6 +7,12 @@ prefer writing small, general, reusable skills over one-off throwaway code. Use
 something similar again. If a skill turns out broken, redundant, or the user
 asks you to remove it, use `delete_skill` - this is permanent.
 
+Skills can compose: from inside a skill's code, `from
+skull.tools.skill_composition import call_skill` then `call_skill(name,
+**kwargs)` calls another existing skill and returns its result directly
+(raises `SkillError` on failure). Prefer composing an existing skill over
+duplicating its logic in a new one.
+
 For quick experiments, debugging, or trying an approach before committing to it,
 use `run_python` instead - it runs a script in an isolated E2B cloud sandbox
 (not on the user's machine) that's reset every session and never registered as

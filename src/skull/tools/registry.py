@@ -359,7 +359,13 @@ META_TOOLS = [
                 "`run(**kwargs)` that returns a JSON-serializable value. Standard library "
                 "and already-installed third-party packages (requests, etc.) are available. "
                 "The skill is saved to disk and immediately becomes callable, in this "
-                "session and every future one."
+                "session and every future one.\n\n"
+                "A skill can call another existing skill instead of duplicating its logic: "
+                "`from skull.tools.skill_composition import call_skill` then "
+                "`result = call_skill('other_skill_name', **kwargs)` - it returns the "
+                "other skill's result directly, or raises SkillError on failure. Check "
+                "`list_skills` for what's already available before reimplementing "
+                "something a skill you (or an earlier session) already built could do."
             ),
             "parameters": {
                 "type": "object",

@@ -18,7 +18,7 @@ from skull.config import (
     load_system_prompt,
 )
 from skull.core.client import stream_chat
-from skull.core.compaction import compact_if_needed
+from skull.core.compaction import compact_if_needed, estimate_tokens, COMPACT_TRIGGER_TOKENS
 from skull.core.memory_context import (
     PLAN_MODE_ADDENDUM,
     build_memory_context,
@@ -66,10 +66,13 @@ class Session:
         mutating tools are withheld and the model is instructed to propose
         a plan instead of acting.
         """
-        # Compact BEFORE capturing the checkpoint - if this shrinks
-        # self.messages, checkpoint must reflect the post-compaction length,
-        # or the later `del messages[checkpoint:]` rollback would operate on
-        # stale indices.
+        # Cheap pre-check using just the prior turns' messages (tool schemas
+        # aren't built yet at this point) - compact BEFORE capturing the
+        # checkpoint, since a shrink here must be reflected in checkpoint or
+        # the later `del messages[checkpoint:]` rollback would use a stale
+        # index. The more precise, tools-aware check happens per round-trip
+        # inside the loop below, since a single turn can itself accumulate
+        # enough tool calls/results to cross the threshold.
         self.messages, compacted = compact_if_needed(self.messages)
         if compacted:
             tprint(f"{DIM}(compacted older conversation history to stay within context limits){RESET}")
@@ -87,6 +90,27 @@ class Session:
 
             memory_block = build_memory_context(user_input)
             extra = memory_block + (PLAN_MODE_ADDENDUM if self.plan_mode else "")
+
+            # Re-check on every round-trip, not just once at turn start: a
+            # single turn can accumulate several large tool calls/results
+            # (e.g. a chain of create_skill/delete_skill retries embedding
+            # generated code), growing well past the trigger threshold
+            # entirely within one handle_turn call. The real request size
+            # includes the tool schemas too - these can be sizable once
+            # several self-created skills accumulate - and the memory/plan
+            # text folded into the system message, not just `messages` alone.
+            if estimate_tokens(messages, tools=tools, extra_chars=len(extra)) >= COMPACT_TRIGGER_TOKENS:
+                pre_len = len(messages)
+                compacted_messages, did_compact = compact_if_needed(messages, force=True)
+                if did_compact:
+                    removed = pre_len - len(compacted_messages)
+                    checkpoint = max(0, checkpoint - removed)
+                    messages[:] = compacted_messages  # in-place: self.messages is the same list
+                    tprint(
+                        f"{DIM}(compacted older conversation history to stay within "
+                        f"context limits){RESET}"
+                    )
+
             if extra and messages and messages[0]["role"] == "system":
                 request_messages = list(messages)
                 request_messages[0] = {

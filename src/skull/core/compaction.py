@@ -34,14 +34,21 @@ SUMMARY_MAX_TOKENS = 1024
 MAX_TRANSCRIPT_CHARS = 24000
 
 
-def estimate_tokens(messages: list) -> int:
-    total_chars = 0
+def estimate_tokens(messages: list, tools: list = None, extra_chars: int = 0) -> int:
+    """Estimate the token size of an actual outgoing request: `messages`
+    plus, if given, the `tools` schema list (this can be sizable once
+    several self-created skills accumulate - each carries a description and
+    a full JSON-schema parameters block) and any extra injected text (e.g.
+    the memory-context block folded into the system message)."""
+    total_chars = extra_chars
     for m in messages:
         content = m.get("content") or ""
         total_chars += len(content)
         for tc in m.get("tool_calls") or []:
             total_chars += len(tc.get("function", {}).get("arguments") or "")
             total_chars += len(tc.get("function", {}).get("name") or "")
+    if tools:
+        total_chars += len(json.dumps(tools))
     return int(total_chars / CHARS_PER_TOKEN)
 
 
@@ -123,18 +130,24 @@ def _summarize(messages_to_summarize: list) -> str:
     return data["choices"][0]["message"]["content"].strip()
 
 
-def compact_if_needed(messages: list) -> tuple:
+def compact_if_needed(messages: list, force: bool = False) -> tuple:
     """If `messages` is estimated to be approaching the context limit,
     summarize the oldest compactable chunk (everything after the system
     prompt, up to but not including the last KEEP_RECENT_MESSAGES) into a
     single system-role note, replacing that chunk in place.
+
+    `force=True` skips this function's own (messages-only) threshold check -
+    use when the caller has already decided compaction is needed based on a
+    more complete estimate (e.g. including tool schemas, which this function
+    has no visibility into). Without it, only `messages` itself is checked
+    against COMPACT_TRIGGER_TOKENS.
 
     Returns (messages, compacted: bool). On any failure to summarize (e.g.
     the summarization call itself fails), returns the original messages
     unchanged with compacted=False - better to risk hitting the context
     limit than to lose history to a failed compaction.
     """
-    if estimate_tokens(messages) < COMPACT_TRIGGER_TOKENS:
+    if not force and estimate_tokens(messages) < COMPACT_TRIGGER_TOKENS:
         return messages, False
 
     if not messages or messages[0].get("role") != "system":

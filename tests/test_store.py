@@ -134,6 +134,71 @@ def test_store_persists_vectors_searchable_across_instances(isolated_memory_dir)
     assert results[0]["score"] > 0.99
 
 
+def test_connect_migrates_pre_existing_db_missing_superseded_by_column(isolated_memory_dir):
+    """Real bug hit during development: an existing persona.db/conversations.db
+    created before superseded_by existed has no such column - CREATE TABLE IF
+    NOT EXISTS doesn't add columns to an already-existing table, so opening
+    an old database without a migration crashes every call that references
+    the column. Simulate an old-schema database and confirm _connect()
+    upgrades it in place instead of failing."""
+    import sqlite3
+
+    old_db_path = mem.MEMORY_DIR / "legacy.db"
+    mem.MEMORY_DIR.mkdir(exist_ok=True)
+    raw = sqlite3.connect(old_db_path)
+    raw.execute(
+        "create table entries ("
+        "id integer primary key autoincrement, "
+        "text text not null, "
+        "metadata text not null, "
+        "created_at text not null default (datetime('now'))"
+        ")"
+    )
+    raw.execute("insert into entries (text, metadata) values ('legacy fact', '{}')")
+    raw.commit()
+    raw.close()
+
+    store = mem.VectorStore("legacy")
+    assert store.all() == [{"text": "legacy fact", "metadata": {}}]
+    columns = {row[1] for row in store._db.execute("pragma table_info(entries)").fetchall()}
+    assert "superseded_by" in columns
+
+
+def test_mark_superseded_excludes_old_fact_from_search_and_all(isolated_memory_dir):
+    store = mem.get_store("persona")
+    store.add("prefers terse answers")
+    store.add("prefers detailed explanations")
+
+    result = store.mark_superseded("prefers terse answers", "prefers detailed explanations")
+    assert result == {"status": "superseded", "superseded": True}
+
+    assert store.count() == 1
+    assert store.all() == [{"text": "prefers detailed explanations", "metadata": {}}]
+    results = store.search("prefers terse answers", k=5)
+    assert all(r["text"] != "prefers terse answers" for r in results)
+
+
+def test_mark_superseded_missing_fact_returns_error(isolated_memory_dir):
+    store = mem.get_store("persona")
+    store.add("only fact")
+    result = store.mark_superseded("nonexistent", "only fact")
+    assert result == {"error": "one or both facts not found", "superseded": False}
+
+
+def test_history_includes_superseded_facts(isolated_memory_dir):
+    store = mem.get_store("persona")
+    store.add("old fact")
+    store.add("new fact")
+    store.mark_superseded("old fact", "new fact")
+
+    history = store.history()
+    assert len(history) == 2
+    old_entry = next(e for e in history if e["text"] == "old fact")
+    new_entry = next(e for e in history if e["text"] == "new fact")
+    assert old_entry["superseded_by"] == new_entry["id"]
+    assert new_entry["superseded_by"] is None
+
+
 def test_conversations_and_persona_are_separate_stores(isolated_memory_dir):
     mem.persona().add("a persona fact")
     mem.conversations().add("a conversation turn")

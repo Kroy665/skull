@@ -40,7 +40,10 @@ mode.
   stops and reports exactly which node and why
 - **Long-term memory** (`remember`/`forget`/`recall_memory`) — remembers
   facts about you and past conversations across sessions, using local
-  embeddings (no external API needed for this)
+  embeddings (no external API needed for this). When a new fact updates or
+  contradicts an existing one (e.g. a changed preference), the old one is
+  automatically superseded instead of both lingering with equal weight —
+  kept in history, just excluded from future recall
 - **Automatic context compaction** — when the conversation grows large, the
   oldest history is summarized into a compact note instead of the session
   erroring out or requiring a manual reset
@@ -113,6 +116,7 @@ src/skull/
         client.py            streaming Qwen chat-completions calls
         session.py            turn-handling loop + interactive REPL
         memory_context.py      memory retrieval, plan-mode instructions
+        memory_supersede.py     detects when a new persona fact updates/contradicts an old one
         compaction.py           summarizes old history to stay within context limits
     tools/
         registry.py            tool schemas + dispatch, plan-mode filtering

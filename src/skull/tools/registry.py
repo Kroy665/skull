@@ -5,6 +5,7 @@ plan-mode filtering."""
 import json
 
 from skull.config import DIM, MAGENTA, RESET
+from skull.core.memory_supersede import forget_fuzzy, remember_with_supersede
 from skull.storage import store as mem
 from skull.tools import files
 from skull.tools import pipeline as pl
@@ -468,7 +469,16 @@ META_TOOLS = [
                 "about them worth recalling in future conversations. Use whenever the user "
                 "reveals something about themselves, not just when explicitly asked to "
                 "remember - this is how you build a persistent persona/knowledge base of "
-                "the user over time."
+                "the user over time.\n\n"
+                "IMPORTANT - when a fact CHANGES or CORRECTS an earlier one (a changed "
+                "preference, a correction, \"actually, ...\"): just call remember with the "
+                "new fact. Do NOT call forget first - remember automatically detects and "
+                "supersedes the old fact for you (checked semantically, not by exact text "
+                "match), and this is more reliable than forget, which only matches EXACT "
+                "stored text and will silently fail on any paraphrase. forget is for when "
+                "the user explicitly asks to delete/remove a fact outright, not for "
+                "updates - manually forgetting-then-remembering an updated fact skips this "
+                "safety check entirely."
             ),
             "parameters": {
                 "type": "object",
@@ -511,17 +521,21 @@ META_TOOLS = [
         "function": {
             "name": "forget",
             "description": (
-                "Permanently remove a previously saved persona fact from long-term memory "
-                "- use when the user corrects or retracts something, or a saved fact turns "
-                "out wrong or outdated. Requires the exact fact text, typically obtained "
-                "from a prior recall_memory result - quote it back exactly as stored."
+                "Permanently remove a previously saved persona fact - use ONLY when the "
+                "user explicitly asks to delete/remove something, not for an updated or "
+                "corrected fact (use remember for that - it supersedes the old fact "
+                "automatically). Prefer quoting the exact stored text (e.g. from a prior "
+                "recall_memory result), but a close paraphrase still works - falls back to "
+                "a confirmed semantic match if there's no exact hit. ALWAYS check the "
+                "result before telling the user it's done: {\"deleted\": false} means "
+                "nothing was actually removed."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "fact": {
                         "type": "string",
-                        "description": "The exact text of the fact to remove, as previously stored",
+                        "description": "The fact to remove - the exact stored text if you have it, otherwise your best description of it",
                     },
                 },
                 "required": ["fact"],
@@ -627,7 +641,7 @@ def _tool_list_skills() -> dict:
 
 
 def _tool_remember(fact: str, category: str = "other") -> dict:
-    return mem.persona().add(fact, {"category": category})
+    return remember_with_supersede(fact, {"category": category})
 
 
 def _tool_recall_memory(query: str, k: int = 5) -> dict:
@@ -648,7 +662,7 @@ META_IMPLS = {
     "delete_skill": lambda args: sm.delete_skill(args.get("name", "")),
     "remember": lambda args: _tool_remember(args.get("fact", ""), args.get("category", "other")),
     "recall_memory": lambda args: _tool_recall_memory(args.get("query", ""), args.get("k", 5)),
-    "forget": lambda args: mem.persona().delete(args.get("fact", "")),
+    "forget": lambda args: forget_fuzzy(args.get("fact", "")),
     "create_pipeline": lambda args: pl.create_pipeline(
         args.get("name", ""),
         args.get("description", ""),

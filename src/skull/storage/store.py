@@ -72,9 +72,15 @@ def _connect(db_path) -> sqlite3.Connection:
         "id integer primary key autoincrement, "
         "text text not null, "
         "metadata text not null, "
-        "created_at text not null default (datetime('now'))"
+        "created_at text not null default (datetime('now')), "
+        "superseded_by integer references entries(id)"
         ")"
     )
+    # Migration for databases created before superseded_by existed (CREATE
+    # TABLE IF NOT EXISTS doesn't add columns to an already-existing table).
+    existing_columns = {row[1] for row in db.execute("pragma table_info(entries)").fetchall()}
+    if "superseded_by" not in existing_columns:
+        db.execute("alter table entries add column superseded_by integer references entries(id)")
     db.execute(
         f"create virtual table if not exists vec_items using vec0(embedding float[{EMBED_DIM}])"
     )
@@ -109,26 +115,29 @@ class VectorStore:
         return {"status": "stored", "count": count}
 
     def search(self, query: str, k: int = 5, min_score: float = 0.0) -> list:
-        count = self._db.execute("select count(*) from entries").fetchone()[0]
+        count = self._db.execute("select count(*) from entries where superseded_by is null").fetchone()[0]
         if count == 0:
             return []
 
         query_vector = embed([query])[0]
         # sqlite-vec's `distance` for vec0 is squared L2. Vectors are unit
         # -normalized, so cosine similarity = 1 - (squared_L2 / 2) exactly.
+        # Over-fetch past k since some hits may be superseded and filtered
+        # out below - k=count guarantees enough candidates regardless of how
+        # many of the top matches turn out to be stale.
         rows = self._db.execute(
             """
             select entries.text, entries.metadata, vec_items.distance
             from vec_items
             join entries on entries.id = vec_items.rowid
-            where vec_items.embedding match ? and k = ?
+            where vec_items.embedding match ? and k = ? and entries.superseded_by is null
             order by vec_items.distance
             """,
-            (query_vector.tobytes(), min(k, count)),
+            (query_vector.tobytes(), count),
         ).fetchall()
 
         results = []
-        for text, metadata_json, distance in rows:
+        for text, metadata_json, distance in rows[:k]:
             score = 1.0 - (distance / 2.0)
             if score < min_score:
                 continue
@@ -136,11 +145,38 @@ class VectorStore:
         return results
 
     def count(self) -> int:
-        return self._db.execute("select count(*) from entries").fetchone()[0]
+        return self._db.execute("select count(*) from entries where superseded_by is null").fetchone()[0]
 
     def all(self) -> list:
-        rows = self._db.execute("select text, metadata from entries order by id").fetchall()
+        rows = self._db.execute(
+            "select text, metadata from entries where superseded_by is null order by id"
+        ).fetchall()
         return [{"text": text, "metadata": json.loads(metadata_json)} for text, metadata_json in rows]
+
+    def history(self) -> list:
+        """Every entry including superseded ones, oldest first - for
+        auditing what got superseded and by what, or manually undoing a
+        wrong supersede decision."""
+        rows = self._db.execute(
+            "select id, text, metadata, superseded_by from entries order by id"
+        ).fetchall()
+        return [
+            {"id": id_, "text": text, "metadata": json.loads(metadata_json), "superseded_by": superseded_by}
+            for id_, text, metadata_json, superseded_by in rows
+        ]
+
+    def mark_superseded(self, old_text: str, new_text: str) -> dict:
+        """Mark the entry matching `old_text` as superseded by the entry
+        matching `new_text` - it stays in the database (visible via
+        history()) but is excluded from search()/all()/count() from now on."""
+        old_row = self._db.execute("select id from entries where text = ? limit 1", (old_text,)).fetchone()
+        new_row = self._db.execute("select id from entries where text = ? limit 1", (new_text,)).fetchone()
+        if old_row is None or new_row is None:
+            return {"error": "one or both facts not found", "superseded": False}
+
+        with self._db:
+            self._db.execute("update entries set superseded_by = ? where id = ?", (new_row[0], old_row[0]))
+        return {"status": "superseded", "superseded": True}
 
     def delete(self, text: str) -> dict:
         """Remove the entry whose text exactly matches `text`. Exact match
@@ -156,7 +192,7 @@ class VectorStore:
             self._db.execute("delete from entries where id = ?", (entry_id,))
             self._db.execute("delete from vec_items where rowid = ?", (entry_id,))
 
-        remaining = self._db.execute("select count(*) from entries").fetchone()[0]
+        remaining = self.count()
         return {"status": "deleted", "deleted": True, "remaining": remaining}
 
 

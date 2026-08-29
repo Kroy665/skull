@@ -31,12 +31,49 @@ def helper(**kwargs):
 
 def test_create_skill_writes_files_and_registers(isolated_skills_dir):
     result = sm.create_skill("doubler", "doubles a number", SIMPLE_PARAMS, DOUBLE_CODE)
-    assert result == {"status": "created", "name": "doubler"}
+    assert result == {"status": "created", "name": "doubler", "side_effects": "read_only"}
 
     skill_dir = isolated_skills_dir / "doubler"
     assert (skill_dir / "run.py").exists()
     assert (skill_dir / "SKILL.md").exists()
     assert sm.get_skill("doubler")["description"] == "doubles a number"
+
+
+def test_reclassify_all_skills_backfills_missing_side_effects(isolated_skills_dir):
+    sm.create_skill("doubler", "doubles a number", SIMPLE_PARAMS, DOUBLE_CODE)
+    # Simulate a pre-existing skill with no side_effects field.
+    index = sm._load_index()
+    for entry in index:
+        del entry["side_effects"]
+    sm._save_index(index)
+    assert "side_effects" not in sm.get_skill("doubler")
+
+    result = sm.reclassify_all_skills()
+    assert result["status"] == "reclassified"
+    assert result["count"] == 1
+    assert sm.get_skill("doubler")["side_effects"] == "read_only"
+
+
+def test_reclassify_all_skills_reports_what_changed(isolated_skills_dir):
+    sm.create_skill("doubler", "doubles a number", SIMPLE_PARAMS, DOUBLE_CODE)
+    index = sm._load_index()
+    for entry in index:
+        entry["side_effects"] = "mutating"  # wrong on purpose
+    sm._save_index(index)
+
+    result = sm.reclassify_all_skills()
+    assert result["changed"] == [{"name": "doubler", "from": "mutating", "to": "read_only"}]
+
+
+def test_create_skill_classifies_pure_code_as_read_only(isolated_skills_dir):
+    sm.create_skill("doubler", "doubles a number", SIMPLE_PARAMS, DOUBLE_CODE)
+    assert sm.get_skill("doubler")["side_effects"] == "read_only"
+
+
+def test_create_skill_classifies_file_writing_code_as_mutating(isolated_skills_dir):
+    code = "def run(**kwargs):\n    with open(kwargs['path'], 'w') as f:\n        f.write('x')\n    return {'ok': True}\n"
+    sm.create_skill("writer", "writes a file", SIMPLE_PARAMS, code)
+    assert sm.get_skill("writer")["side_effects"] == "mutating"
 
 
 def test_create_skill_rejects_invalid_name(isolated_skills_dir):

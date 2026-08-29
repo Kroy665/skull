@@ -32,6 +32,7 @@ import traceback
 from pathlib import Path
 
 from skull.config import SKILLS_DIR
+from skull.tools.skill_analysis import classify_skill_code
 
 INDEX_PATH = SKILLS_DIR / "index.json"
 
@@ -175,6 +176,27 @@ def get_skill(name: str) -> dict | None:
     return None
 
 
+def reclassify_all_skills() -> dict:
+    """Re-run the static side_effects classifier against every skill's
+    current run.py and update the index. Mainly for skills created before
+    this classification existed (they have no "side_effects" field at all,
+    which build_tools_and_impls treats as mutating/excluded-from-plan-mode
+    by default) - this backfills them without needing to recreate each one.
+    Safe to call any time; a skill's own code never changes as a result."""
+    index = _load_index()
+    updated = []
+    for entry in index:
+        run_py = _skill_dir(entry["name"]) / "run.py"
+        if not run_py.exists():
+            continue
+        new_classification = classify_skill_code(run_py.read_text())
+        if entry.get("side_effects") != new_classification:
+            updated.append({"name": entry["name"], "from": entry.get("side_effects"), "to": new_classification})
+        entry["side_effects"] = new_classification
+    _save_index(index)
+    return {"status": "reclassified", "count": len(index), "changed": updated}
+
+
 def create_skill(name: str, description: str, parameters: dict, code: str) -> dict:
     """Write a new skill to disk and register it.
 
@@ -226,12 +248,14 @@ def create_skill(name: str, description: str, parameters: dict, code: str) -> di
                 shutil.rmtree(version_dir, ignore_errors=True)
         return {"error": f"skill failed to import after write: {e}"}
 
+    side_effects = classify_skill_code(code)
+
     index = _load_index()
     index = [e for e in index if e["name"] != name]  # replace if exists
-    index.append({"name": name, "description": description, "parameters": parameters})
+    index.append({"name": name, "description": description, "parameters": parameters, "side_effects": side_effects})
     _save_index(index)
 
-    return {"status": "created", "name": name}
+    return {"status": "created", "name": name, "side_effects": side_effects}
 
 
 def delete_skill(name: str) -> dict:

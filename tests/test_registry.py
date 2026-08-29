@@ -74,28 +74,74 @@ def test_plan_mode_keeps_read_only_builtins(isolated_skills_dir):
         assert read_only_name in impls
 
 
-def test_plan_mode_excludes_self_created_skills(isolated_skills_dir):
-    """Skill side effects aren't tracked, so every self-created skill is
-    treated as potentially mutating and excluded wholesale in plan mode -
-    even one that's actually harmless."""
+def test_plan_mode_includes_a_statically_read_only_skill(isolated_skills_dir):
+    """A skill whose code is statically provable to have no side effects
+    (pure computation) must stay available in plan mode - it can't act on
+    anything regardless of when it's called, so hiding it wholesale would
+    be overly conservative for no safety benefit."""
     from skull.tools import skills as sm
 
     sm.create_skill(
-        "harmless_skill",
+        "pure_skill",
         "does nothing dangerous",
         {"type": "object", "properties": {}},
         "def run(**kwargs):\n    return {'ok': True}\n",
     )
+    assert sm.get_skill("pure_skill")["side_effects"] == "read_only"
 
     plan_tools, plan_impls = registry.build_tools_and_impls(plan_mode=True)
     plan_names = {t["function"]["name"] for t in plan_tools}
-    assert "harmless_skill" not in plan_names
-    assert "harmless_skill" not in plan_impls
+    assert "pure_skill" in plan_names
+    assert "pure_skill" in plan_impls
+
+
+def test_plan_mode_excludes_a_mutating_skill(isolated_skills_dir):
+    """A skill whose code writes files (or does anything else the static
+    analyzer can't prove is safe) must stay hidden in plan mode, same as
+    before this per-skill classification existed."""
+    from skull.tools import skills as sm
+
+    sm.create_skill(
+        "writes_a_file",
+        "writes to disk",
+        {"type": "object", "properties": {}},
+        "def run(**kwargs):\n    with open('/tmp/x.txt', 'w') as f:\n        f.write('x')\n    return {'ok': True}\n",
+    )
+    assert sm.get_skill("writes_a_file")["side_effects"] == "mutating"
+
+    plan_tools, plan_impls = registry.build_tools_and_impls(plan_mode=True)
+    plan_names = {t["function"]["name"] for t in plan_tools}
+    assert "writes_a_file" not in plan_names
+    assert "writes_a_file" not in plan_impls
 
     normal_tools, normal_impls = registry.build_tools_and_impls(plan_mode=False)
     normal_names = {t["function"]["name"] for t in normal_tools}
-    assert "harmless_skill" in normal_names
-    assert "harmless_skill" in normal_impls
+    assert "writes_a_file" in normal_names
+    assert "writes_a_file" in normal_impls
+
+
+def test_plan_mode_excludes_a_skill_missing_side_effects_field(isolated_skills_dir):
+    """A skill created before this classification existed has no
+    "side_effects" key in its registry entry at all - it must default to
+    excluded (the safe default), not silently treated as read_only."""
+    from skull.tools import skills as sm
+
+    sm.create_skill(
+        "legacy_skill",
+        "predates classification",
+        {"type": "object", "properties": {}},
+        "def run(**kwargs):\n    return {'ok': True}\n",
+    )
+    # Simulate a pre-existing index entry with no side_effects field.
+    index = sm._load_index()
+    for entry in index:
+        if entry["name"] == "legacy_skill":
+            del entry["side_effects"]
+    sm._save_index(index)
+
+    plan_tools, _ = registry.build_tools_and_impls(plan_mode=True)
+    plan_names = {t["function"]["name"] for t in plan_tools}
+    assert "legacy_skill" not in plan_names
 
 
 def test_build_tools_includes_freshly_created_skill_without_restart(isolated_skills_dir):

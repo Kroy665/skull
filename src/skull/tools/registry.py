@@ -790,13 +790,20 @@ def build_tools_and_impls(plan_mode: bool = False, query: str = None, always_inc
     In plan mode, mutating built-in tools (create_skill, delete_skill,
     remember, forget, run_python, run_command, stop_background_command,
     write_file, sandbox_write_file, create_pipeline, delete_pipeline,
-    run_pipeline) and every self-created skill are excluded - a skill's
-    (and by extension a pipeline node's) side effects aren't tracked, so the
-    safe default is to treat all of them as potentially mutating and only
-    allow the known-read-only built-ins (web_search, scrape_page,
-    list_skills, recall_memory, read_file, list_directory,
-    sandbox_read_file, sandbox_list_directory, list_pipelines) plus plain
-    chat.
+    run_pipeline) are excluded, plus every self-created skill NOT
+    statically classified "read_only" by tools.skill_analysis - each
+    skill's own code is analyzed at create_skill time (whitelist-based:
+    only skills provably free of file writes, subprocess/eval/exec, network
+    calls, etc. are read_only; anything uncertain defaults to mutating), so
+    a genuinely pure skill like a unit converter stays available in plan
+    mode while one that writes files or hits the network stays hidden.
+    Skills created before this classification existed have no
+    "side_effects" field and are treated as mutating (the safe default) -
+    they get correctly classified the next time they're recreated/edited.
+    Also allowed: the known-read-only built-ins (web_search, scrape_page,
+    list_skills, list_skill_versions, recall_memory, read_file,
+    list_directory, sandbox_read_file, sandbox_list_directory,
+    list_pipelines) plus plain chat.
 
     Once the number of saved skills exceeds SKILL_FILTER_THRESHOLD, only the
     top-K skills most relevant to `query` (by embedding similarity against
@@ -813,12 +820,14 @@ def build_tools_and_impls(plan_mode: bool = False, query: str = None, always_inc
     if plan_mode:
         tools = [t for t in tools if t["function"]["name"] not in MUTATING_TOOL_NAMES]
         impls = {k: v for k, v in impls.items() if k not in MUTATING_TOOL_NAMES}
-        return tools, impls
 
     if query:
         skill_entries = _select_relevant_skills(query, always_include_skills or set())
     else:
         skill_entries = sm.list_skills()
+
+    if plan_mode:
+        skill_entries = [e for e in skill_entries if e.get("side_effects") == "read_only"]
 
     for entry in skill_entries:
         name = entry["name"]

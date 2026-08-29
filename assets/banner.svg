@@ -1,0 +1,30 @@
+<svg width="1100" height="260" viewBox="0 0 1100 260" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#141821"/>
+      <stop offset="100%" stop-color="#1c2230"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#7aa2f7"/>
+      <stop offset="100%" stop-color="#bb9af7"/>
+    </linearGradient>
+    <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse">
+      <path d="M 28 0 L 0 0 0 28" fill="none" stroke="#ffffff" stroke-opacity="0.035" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1100" height="260" fill="url(#bg)"/>
+  <rect width="1100" height="260" fill="url(#grid)"/>
+
+  <text x="60" y="112" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="26" fill="#7aa2f7" opacity="0.85">$</text>
+  <text x="90" y="112" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="26" fill="#8b93a7">uv run chat.py</text>
+
+  <text x="58" y="178" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-weight="700" font-size="72" fill="#f2f4f8" letter-spacing="2">skull</text>
+  <rect x="330" y="140" width="4" height="46" fill="url(#accent)"/>
+
+  <text x="60" y="222" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="19" fill="#9aa5bd">a self-extending terminal agent for a self-hosted Qwen model</text>
+
+  <circle cx="1010" cy="50" r="6" fill="#f7768e"/>
+  <circle cx="982" cy="50" r="6" fill="#e0af68"/>
+  <circle cx="954" cy="50" r="6" fill="#9ece6a"/>
+</svg>

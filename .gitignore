@@ -25,3 +25,6 @@ pipelines/*
 
 # Throwaway test code, wiped every session start
 scratch/
+
+# Claude Code session-local state
+.claude/

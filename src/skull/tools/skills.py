@@ -32,6 +32,7 @@ import traceback
 from pathlib import Path
 
 from skull.config import SKILLS_DIR
+from skull.tools import skill_env as scenv
 from skull.tools.skill_analysis import classify_skill_code
 
 INDEX_PATH = SKILLS_DIR / "index.json"
@@ -153,15 +154,19 @@ def rollback_skill(name: str, version: int = None) -> dict:
     return {"status": "rolled_back", "name": name, "restored_version": target_version}
 
 
-def _render_skill_md(name: str, description: str, parameters: dict) -> str:
+def _render_skill_md(name: str, description: str, parameters: dict, required_env: list = None) -> str:
     params_block = json.dumps(parameters, indent=2)
-    return (
+    md = (
         f"# {name}\n\n"
         f"{description}\n\n"
         f"## Parameters\n\n"
         f"JSON-schema for `run(**kwargs)`:\n\n"
         f"```json\n{params_block}\n```\n"
     )
+    if required_env:
+        env_list = "\n".join(f"- `{env_name}`" for env_name in required_env)
+        md += f"\n## Required environment variables\n\n{env_list}\n"
+    return md
 
 
 def list_skills() -> list:
@@ -197,13 +202,20 @@ def reclassify_all_skills() -> dict:
     return {"status": "reclassified", "count": len(index), "changed": updated}
 
 
-def create_skill(name: str, description: str, parameters: dict, code: str) -> dict:
+def create_skill(name: str, description: str, parameters: dict, code: str, required_env: list = None) -> dict:
     """Write a new skill to disk and register it.
 
     `code` must define a top-level function `run(**kwargs)` that returns a
     JSON-serializable result (or raises on failure).
     `parameters` is a JSON-schema `properties`-style object, e.g.
         {"type": "object", "properties": {"n": {"type": "integer"}}, "required": ["n"]}
+    `required_env` (optional) lists env var names (e.g. ["SMTP_PASSWORD",
+    "SMTP_USERNAME"]) the skill's code reads via
+    `skull.tools.skill_env.get_env(name)` at call time - NOT via kwargs.
+    Credentials must never be a kwarg/parameter the model asks the user to
+    supply in chat (that puts them in plain text in conversation history
+    and memory/); see tools/skill_env.py and the request_skill_env tool for
+    how the user sets a value directly, without the model ever seeing it.
 
     Writes skills/<name>/run.py and skills/<name>/SKILL.md. If a skill
     with this name already exists, its current version is archived first
@@ -214,6 +226,10 @@ def create_skill(name: str, description: str, parameters: dict, code: str) -> di
         return {"error": "name must be lowercase snake_case, 2-64 chars, start with a letter"}
     if "def run(" not in code:
         return {"error": "code must define a top-level function `run(**kwargs)`"}
+    required_env = required_env or []
+    for env_name in required_env:
+        if not scenv.is_valid_env_name(env_name):
+            return {"error": f"invalid required_env name {env_name!r} - {scenv.ENV_VAR_NAME_RE_MSG}"}
 
     skill_dir = _skill_dir(name)
     is_new = not skill_dir.exists()
@@ -223,7 +239,7 @@ def create_skill(name: str, description: str, parameters: dict, code: str) -> di
 
     skill_dir.mkdir(parents=True, exist_ok=True)
     (skill_dir / "run.py").write_text(code)
-    (skill_dir / "SKILL.md").write_text(_render_skill_md(name, description, parameters))
+    (skill_dir / "SKILL.md").write_text(_render_skill_md(name, description, parameters, required_env))
 
     # Sanity-check: does it even import?
     try:
@@ -252,10 +268,27 @@ def create_skill(name: str, description: str, parameters: dict, code: str) -> di
 
     index = _load_index()
     index = [e for e in index if e["name"] != name]  # replace if exists
-    index.append({"name": name, "description": description, "parameters": parameters, "side_effects": side_effects})
+    index.append(
+        {
+            "name": name,
+            "description": description,
+            "parameters": parameters,
+            "side_effects": side_effects,
+            "required_env": required_env,
+        }
+    )
     _save_index(index)
 
-    return {"status": "created", "name": name, "side_effects": side_effects}
+    result = {"status": "created", "name": name, "side_effects": side_effects}
+    missing = scenv.list_missing_env(required_env)
+    if missing:
+        result["missing_env"] = missing
+        result["note"] = (
+            f"This skill needs {', '.join(missing)} set before it can be called successfully - "
+            "use request_skill_env to have the user set each one directly (never ask the user "
+            "to paste a credential value into chat)."
+        )
+    return result
 
 
 def delete_skill(name: str) -> dict:

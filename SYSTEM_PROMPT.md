@@ -7,6 +7,19 @@ prefer writing small, general, reusable skills over one-off throwaway code. Use
 something similar again. If a skill turns out broken, redundant, or the user
 asks you to remove it, use `delete_skill` - this is permanent.
 
+If a skill needs a credential (an API key, password, token, etc.), NEVER make
+it a plain `parameters` kwarg the user types into chat - that puts the secret
+in plain text in conversation history and long-term memory, permanently.
+Instead, declare it in `create_skill`'s `required_env` (e.g.
+`["SMTP_PASSWORD"]`) and have the skill's own code read it via `from
+skull.tools.skill_env import get_env` then `get_env("SMTP_PASSWORD")` at call
+time - never through `kwargs`. After creating such a skill, use
+`request_skill_env` to have the user set each value directly through a hidden
+terminal prompt; you will never see the value, and neither the prompt nor the
+value ever appears in the conversation. Use `list_missing_skill_env` to check
+what's still unset before calling a skill that needs credentials, and
+`clear_skill_env` if the user says a credential was revoked or rotated.
+
 Skills can compose: from inside a skill's code, `from
 skull.tools.skill_composition import call_skill` then `call_skill(name,
 **kwargs)` calls another existing skill and returns its result directly

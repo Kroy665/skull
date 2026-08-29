@@ -10,6 +10,7 @@ from skull.storage import store as mem
 from skull.tools import files
 from skull.tools import pipeline as pl
 from skull.tools import shell
+from skull.tools import skill_env as skenv
 from skull.tools import skills as sm
 from skull.tools import sandbox as scratch
 from skull.tools import web as wt
@@ -381,7 +382,7 @@ BUILTIN_IMPLS = {
 # Tools that require blocking interactive stdin (a permission prompt) - the
 # spinner must be stopped before these run so the prompt doesn't collide
 # with spinner output on the same terminal line.
-INTERACTIVE_TOOL_NAMES = {"run_command", "write_file", "download_from_sandbox"}
+INTERACTIVE_TOOL_NAMES = {"run_command", "write_file", "download_from_sandbox", "request_skill_env"}
 
 # ---------------------------------------------------------------------------
 # Self-extension meta-tools: let the model write and register a brand new
@@ -408,7 +409,14 @@ META_TOOLS = [
                 "Calling this with the name of a skill that already exists overwrites "
                 "it - the previous version is archived automatically (see "
                 "rollback_skill/list_skill_versions), so this is safe to do when fixing "
-                "or improving an existing skill."
+                "or improving an existing skill.\n\n"
+                "IMPORTANT - if the skill needs any credential (an API key, password, "
+                "token, etc.): NEVER make it a `parameters` kwarg the user types into "
+                "chat - that puts the secret in plain text in conversation history. "
+                "Instead list it in `required_env` (e.g. [\"SMTP_PASSWORD\"]) and read it "
+                "in the skill's own code via `from skull.tools.skill_env import get_env` "
+                "then `get_env(\"SMTP_PASSWORD\")`. Use request_skill_env afterward to have "
+                "the user set each value directly - you will never see it."
             ),
             "parameters": {
                 "type": "object",
@@ -425,12 +433,22 @@ META_TOOLS = [
                         "type": "object",
                         "description": (
                             "JSON-schema object describing run()'s keyword arguments, e.g. "
-                            '{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}'
+                            '{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]} '
+                            "- must NOT include any credential; those go in required_env instead."
                         ),
                     },
                     "code": {
                         "type": "string",
                         "description": "Full Python source defining `def run(**kwargs): ...`",
+                    },
+                    "required_env": {
+                        "type": "array",
+                        "description": (
+                            "UPPER_SNAKE_CASE env var names this skill's code reads via "
+                            "skull.tools.skill_env.get_env(name) - e.g. [\"SMTP_PASSWORD\", "
+                            "\"SMTP_USERNAME\"]. Omit if the skill needs no credentials."
+                        ),
+                        "items": {"type": "string"},
                     },
                 },
                 "required": ["name", "description", "parameters", "code"],
@@ -505,6 +523,74 @@ META_TOOLS = [
                         "type": "integer",
                         "description": "Specific version number to restore (default: most recent archived version)",
                     },
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "request_skill_env",
+            "description": (
+                "Ask the user to set a credential (API key, password, token) a skill "
+                "needs, WITHOUT ever seeing the value yourself. This prompts the user "
+                "directly in their terminal with hidden input - the value is stored "
+                "locally and is never included in this tool's result, never sent to you, "
+                "and never appears in the conversation. Use this instead of asking the "
+                "user to paste a credential into chat, which would put it in plain text "
+                "in conversation history and long-term memory. Check list_missing_skill_env "
+                "first to see what a skill still needs."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "The UPPER_SNAKE_CASE env var name to set, e.g. 'SMTP_PASSWORD'",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "One short sentence explaining why, shown to the user in the prompt",
+                    },
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_missing_skill_env",
+            "description": (
+                "Check which of a skill's required_env variables are not yet set, "
+                "without ever seeing the values of the ones that are. Use before calling "
+                "a skill that declared required_env, to know whether to call "
+                "request_skill_env first instead of the skill failing partway through."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "The skill name to check"},
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "clear_skill_env",
+            "description": (
+                "Remove a previously set credential - use when the user says a "
+                "credential was revoked, rotated, or should be forgotten. This cannot "
+                "be undone; the user will need to run request_skill_env again to set a "
+                "new value."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "The UPPER_SNAKE_CASE env var name to clear"},
                 },
                 "required": ["name"],
             },
@@ -702,17 +788,29 @@ def _tool_recall_memory(query: str, k: int = 5) -> dict:
     }
 
 
+def _tool_list_missing_skill_env(name: str) -> dict:
+    entry = sm.get_skill(name)
+    if entry is None:
+        return {"error": f"no such skill '{name}'"}
+    required = entry.get("required_env") or []
+    return {"name": name, "required_env": required, "missing": skenv.list_missing_env(required)}
+
+
 META_IMPLS = {
     "create_skill": lambda args: sm.create_skill(
         args.get("name", ""),
         args.get("description", ""),
         args.get("parameters", {}),
         args.get("code", ""),
+        args.get("required_env") or [],
     ),
     "list_skills": lambda args: _tool_list_skills(),
     "delete_skill": lambda args: sm.delete_skill(args.get("name", "")),
     "list_skill_versions": lambda args: sm.list_skill_versions(args.get("name", "")),
     "rollback_skill": lambda args: sm.rollback_skill(args.get("name", ""), args.get("version")),
+    "request_skill_env": lambda args: skenv.request_skill_env(args.get("name", ""), args.get("reason", "")),
+    "list_missing_skill_env": lambda args: _tool_list_missing_skill_env(args.get("name", "")),
+    "clear_skill_env": lambda args: skenv.clear_env(args.get("name", "")),
     "remember": lambda args: _tool_remember(args.get("fact", ""), args.get("category", "other")),
     "recall_memory": lambda args: _tool_recall_memory(args.get("query", ""), args.get("k", 5)),
     "forget": lambda args: forget_fuzzy(args.get("fact", "")),
@@ -734,6 +832,8 @@ MUTATING_TOOL_NAMES = {
     "create_skill",
     "delete_skill",
     "rollback_skill",
+    "request_skill_env",
+    "clear_skill_env",
     "remember",
     "forget",
     "run_python",

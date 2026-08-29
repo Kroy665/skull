@@ -19,6 +19,11 @@ SYSTEM_PROMPT_PATH = PROJECT_ROOT / "SYSTEM_PROMPT.md"
 SKILLS_DIR = PROJECT_ROOT / "skills"
 MEMORY_DIR = PROJECT_ROOT / "memory"
 PIPELINES_DIR = PROJECT_ROOT / "pipelines"
+# Secrets for skills (API keys, passwords) - kept separate from the app's
+# own .env so a skill's credentials are never something the model reads,
+# sets, or sees a value from; only the user can set one, via a direct
+# terminal prompt (see tools/skill_env.py). Gitignored, same as .env.
+SKILLS_ENV_PATH = PROJECT_ROOT / "skills.env"
 
 RESET = "\033[0m"
 BOLD = "\033[1m"

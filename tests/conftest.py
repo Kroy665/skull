@@ -33,6 +33,15 @@ def isolated_skills_dir(tmp_path, monkeypatch):
 
 
 @pytest.fixture
+def isolated_skills_env(tmp_path, monkeypatch):
+    """Redirect skill secrets storage to an empty temp file."""
+    from skull.tools import skill_env as scenv
+
+    monkeypatch.setattr(scenv, "SKILLS_ENV_PATH", tmp_path / "skills.env")
+    return tmp_path / "skills.env"
+
+
+@pytest.fixture
 def isolated_pipelines_dir(tmp_path, monkeypatch, isolated_skills_dir):
     """Redirect pipeline storage to an empty temp directory. Depends on
     isolated_skills_dir since pipeline validation looks up skills."""

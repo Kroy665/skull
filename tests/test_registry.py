@@ -31,6 +31,48 @@ def test_download_from_sandbox_is_interactive_and_mutating():
     assert "download_from_sandbox" in registry.MUTATING_TOOL_NAMES
 
 
+def test_request_skill_env_is_interactive_and_mutating():
+    """request_skill_env blocks on a real getpass() prompt and writes to
+    skills.env, so it needs the same interactive-approval-path treatment
+    as write_file, and must be withheld in plan mode."""
+    assert "request_skill_env" in registry.INTERACTIVE_TOOL_NAMES
+    assert "request_skill_env" in registry.MUTATING_TOOL_NAMES
+
+
+def test_clear_skill_env_is_mutating():
+    assert "clear_skill_env" in registry.MUTATING_TOOL_NAMES
+
+
+def test_list_missing_skill_env_is_not_mutating():
+    """Read-only: it only reports which names are unset, never a value -
+    safe to leave available in plan mode."""
+    assert "list_missing_skill_env" not in registry.MUTATING_TOOL_NAMES
+
+
+def test_env_tools_are_registered(isolated_skills_dir):
+    tools, impls = registry.build_tools_and_impls(plan_mode=False)
+    names = {t["function"]["name"] for t in tools}
+    for tool_name in ("request_skill_env", "list_missing_skill_env", "clear_skill_env"):
+        assert tool_name in names
+        assert tool_name in impls
+
+
+def test_list_missing_skill_env_impl_round_trips(isolated_skills_dir, isolated_skills_env):
+    from skull.tools import skills as sm
+
+    sm.create_skill(
+        "notify",
+        "sends a notification",
+        {"type": "object", "properties": {}},
+        "def run(**kwargs):\n    return {'ok': True}\n",
+        required_env=["FAKE_API_KEY"],
+    )
+
+    _, impls = registry.build_tools_and_impls(plan_mode=False)
+    result = impls["list_missing_skill_env"]({"name": "notify"})
+    assert result == {"name": "notify", "required_env": ["FAKE_API_KEY"], "missing": ["FAKE_API_KEY"]}
+
+
 def test_plan_mode_excludes_all_mutating_tools(isolated_skills_dir):
     tools, impls = registry.build_tools_and_impls(plan_mode=True)
     names = {t["function"]["name"] for t in tools}

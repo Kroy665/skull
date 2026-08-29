@@ -76,6 +76,82 @@ def test_create_skill_classifies_file_writing_code_as_mutating(isolated_skills_d
     assert sm.get_skill("writer")["side_effects"] == "mutating"
 
 
+# ---------------------------------------------------------------------------
+# create_skill(required_env=...) - credentials never as a plain kwarg. Real
+# problem this solves: a model asked the user to paste an SMTP password
+# directly into chat, landing it in plain text in conversation history.
+# ---------------------------------------------------------------------------
+
+SEND_CODE_USING_ENV = """
+from skull.tools.skill_env import get_env
+
+def run(**kwargs):
+    password = get_env("FAKE_API_KEY")
+    return {"had_key": password is not None}
+"""
+
+
+def test_create_skill_stores_required_env(isolated_skills_dir, isolated_skills_env):
+    result = sm.create_skill(
+        "notify", "sends a notification", SIMPLE_PARAMS, SEND_CODE_USING_ENV, required_env=["FAKE_API_KEY"]
+    )
+    assert result["status"] == "created"
+    assert sm.get_skill("notify")["required_env"] == ["FAKE_API_KEY"]
+
+
+def test_create_skill_reports_missing_env_in_result(isolated_skills_dir, isolated_skills_env):
+    result = sm.create_skill(
+        "notify", "sends a notification", SIMPLE_PARAMS, SEND_CODE_USING_ENV, required_env=["FAKE_API_KEY"]
+    )
+    assert result["missing_env"] == ["FAKE_API_KEY"]
+    assert "note" in result
+
+
+def test_create_skill_omits_missing_env_when_none_required(isolated_skills_dir, isolated_skills_env):
+    result = sm.create_skill("doubler", "doubles", SIMPLE_PARAMS, DOUBLE_CODE)
+    assert "missing_env" not in result
+
+
+def test_create_skill_no_missing_env_once_all_set(isolated_skills_dir, isolated_skills_env, monkeypatch):
+    from skull.tools import skill_env as scenv
+
+    monkeypatch.setattr(scenv.getpass, "getpass", lambda prompt: "a-real-value")
+    scenv.request_skill_env("FAKE_API_KEY")
+
+    result = sm.create_skill(
+        "notify", "sends a notification", SIMPLE_PARAMS, SEND_CODE_USING_ENV, required_env=["FAKE_API_KEY"]
+    )
+    assert "missing_env" not in result
+
+
+def test_create_skill_rejects_invalid_required_env_name(isolated_skills_dir):
+    result = sm.create_skill(
+        "notify", "sends a notification", SIMPLE_PARAMS, DOUBLE_CODE, required_env=["not valid!"]
+    )
+    assert "error" in result
+    assert sm.get_skill("notify") is None
+
+
+def test_skill_can_read_its_own_env_via_get_env(isolated_skills_dir, isolated_skills_env, monkeypatch):
+    """End-to-end: the skill's own code reads the secret via get_env() at
+    call time, never through kwargs - confirms the actual runtime path
+    works, not just that create_skill records the declaration."""
+    from skull.tools import skill_env as scenv
+
+    sm.create_skill(
+        "notify", "sends a notification", SIMPLE_PARAMS, SEND_CODE_USING_ENV, required_env=["FAKE_API_KEY"]
+    )
+
+    result_before = sm.run_skill("notify", {"n": 1})
+    assert result_before == {"result": {"had_key": False}}
+
+    monkeypatch.setattr(scenv.getpass, "getpass", lambda prompt: "a-real-value")
+    scenv.request_skill_env("FAKE_API_KEY")
+
+    result_after = sm.run_skill("notify", {"n": 1})
+    assert result_after == {"result": {"had_key": True}}
+
+
 def test_create_skill_rejects_invalid_name(isolated_skills_dir):
     result = sm.create_skill("NotSnakeCase", "desc", SIMPLE_PARAMS, DOUBLE_CODE)
     assert "error" in result

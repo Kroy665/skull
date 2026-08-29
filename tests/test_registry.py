@@ -39,6 +39,33 @@ def test_plan_mode_excludes_all_mutating_tools(isolated_skills_dir):
         assert mutating_name not in impls, f"{mutating_name} leaked into plan mode impls"
 
 
+def test_skill_versioning_tools_are_registered(isolated_skills_dir):
+    tools, impls = registry.build_tools_and_impls(plan_mode=False)
+    names = {t["function"]["name"] for t in tools}
+    assert "list_skill_versions" in names
+    assert "rollback_skill" in names
+    assert "list_skill_versions" in impls
+    assert "rollback_skill" in impls
+
+
+def test_rollback_skill_is_mutating_list_skill_versions_is_not():
+    assert "rollback_skill" in registry.MUTATING_TOOL_NAMES
+    assert "list_skill_versions" not in registry.MUTATING_TOOL_NAMES
+
+
+def test_rollback_skill_impl_round_trips_through_registry(isolated_skills_dir):
+    from skull.tools import skills as sm
+
+    params = {"type": "object", "properties": {"n": {"type": "integer"}}, "required": ["n"]}
+    sm.create_skill("doubler", "v1", params, "def run(**kwargs):\n    return kwargs['n'] * 2\n")
+    sm.create_skill("doubler", "v2", params, "def run(**kwargs):\n    return kwargs['n'] * 3\n")
+
+    _, impls = registry.build_tools_and_impls(plan_mode=False)
+    result = impls["rollback_skill"]({"name": "doubler"})
+    assert result["status"] == "rolled_back"
+    assert sm.get_skill("doubler")["description"] == "v1"
+
+
 def test_plan_mode_keeps_read_only_builtins(isolated_skills_dir):
     tools, impls = registry.build_tools_and_impls(plan_mode=True)
     names = {t["function"]["name"] for t in tools}

@@ -404,7 +404,11 @@ META_TOOLS = [
                 "To reuse another skill's logic instead of duplicating it: "
                 "`from skull.tools.skill_composition import call_skill` then "
                 "`call_skill('other_skill_name', **kwargs)` - returns its result "
-                "directly, raises SkillError on failure. Check list_skills first."
+                "directly, raises SkillError on failure. Check list_skills first.\n\n"
+                "Calling this with the name of a skill that already exists overwrites "
+                "it - the previous version is archived automatically (see "
+                "rollback_skill/list_skill_versions), so this is safe to do when fixing "
+                "or improving an existing skill."
             ),
             "parameters": {
                 "type": "object",
@@ -448,12 +452,59 @@ META_TOOLS = [
             "description": (
                 "Permanently delete a previously self-created skill - use when a skill "
                 "turned out broken, redundant with a better one you just made, or the "
-                "user asks you to remove it. This cannot be undone."
+                "user asks you to remove it. This cannot be undone (it also removes the "
+                "skill's archived version history - to undo a bad overwrite instead of "
+                "deleting the skill entirely, use rollback_skill)."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "The exact skill name to delete"},
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_skill_versions",
+            "description": (
+                "List a skill's archived previous versions (most recent first), each "
+                "with the description it had at that point. A version gets archived "
+                "automatically every time create_skill overwrites an existing skill - "
+                "use this to see what's available before calling rollback_skill."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "The skill name"},
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "rollback_skill",
+            "description": (
+                "Restore an earlier version of a skill as the live one - use when the "
+                "current version of a skill is broken or worse than before, instead of "
+                "trying to hand-fix it or recreating it from scratch. Defaults to the "
+                "most recently archived version (undoes the last overwrite); pass a "
+                "specific version number from list_skill_versions for an older one. The "
+                "version being replaced is itself archived, so a rollback can be undone "
+                "with another rollback_skill call."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "The skill name"},
+                    "version": {
+                        "type": "integer",
+                        "description": "Specific version number to restore (default: most recent archived version)",
+                    },
                 },
                 "required": ["name"],
             },
@@ -660,6 +711,8 @@ META_IMPLS = {
     ),
     "list_skills": lambda args: _tool_list_skills(),
     "delete_skill": lambda args: sm.delete_skill(args.get("name", "")),
+    "list_skill_versions": lambda args: sm.list_skill_versions(args.get("name", "")),
+    "rollback_skill": lambda args: sm.rollback_skill(args.get("name", ""), args.get("version")),
     "remember": lambda args: _tool_remember(args.get("fact", ""), args.get("category", "other")),
     "recall_memory": lambda args: _tool_recall_memory(args.get("query", ""), args.get("k", 5)),
     "forget": lambda args: forget_fuzzy(args.get("fact", "")),
@@ -680,6 +733,7 @@ META_IMPLS = {
 MUTATING_TOOL_NAMES = {
     "create_skill",
     "delete_skill",
+    "rollback_skill",
     "remember",
     "forget",
     "run_python",

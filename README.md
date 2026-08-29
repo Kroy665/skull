@@ -5,7 +5,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white" alt="Python 3.12+">
   <img src="https://img.shields.io/badge/package%20manager-uv-DE5FE9" alt="Package manager: uv">
-  <img src="https://img.shields.io/badge/tests-147%20passing-4c9a2a" alt="147 tests">
+  <img src="https://img.shields.io/badge/tests-188%20passing-4c9a2a" alt="188 tests">
   <img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="License: GPL-3.0">
 </p>
 
@@ -14,7 +14,7 @@
   with automatic fact supersession · document &amp; OCR reading · plan/auto execution modes
 </p>
 
-<p align="center"><sub>147 tests · zero external tokenizer dependency · every non-trivial feature below shipped with a real bug found by testing it against the live model, not reasoned out on paper</sub></p>
+<p align="center"><sub>188 tests · zero external tokenizer dependency · every non-trivial feature below shipped with a real bug found by testing it against the live model, not reasoned out on paper</sub></p>
 
 ---
 
@@ -255,7 +255,7 @@ SYSTEM_PROMPT.md               the model's system prompt (editable without touch
 skills/                         self-created skills (starts empty, gitignored)
 pipelines/                      self-created skill pipelines/DAGs (starts empty, gitignored)
 memory/                         persona facts + conversation log (starts empty, gitignored)
-tests/                          147 tests, all network calls mocked, all storage isolated to tmp_path
+tests/                          188 unit tests (mocked) + 5 live-model scenarios (tests/scenarios.py)
 ```
 
 `skills/`, `pipelines/`, and `memory/` live at the project root (not
@@ -316,21 +316,59 @@ Tab or Right-arrow (on an empty line) accepts an inline suggestion.
 uv run pytest
 ```
 
-147 tests across 10 files, covering context compaction, skill/pipeline
+188 tests across 11 files, covering context compaction, skill/pipeline
 CRUD and execution (all validation error paths, fan-out/fan-in, mid-run
 failure handling), the vector store (search ranking, delete integrity,
 schema migration), memory supersession and fuzzy-forget (including the
 exact false-positive case that would make a naive similarity threshold
-unsafe), plan-mode tool filtering, and document/OCR extraction. Every
-network call is mocked and every filesystem/database operation is
-isolated to a temp directory — nothing in the suite touches your real
-`skills/`, `pipelines/`, or `memory/`.
+unsafe), the skill side-effects classifier, plan-mode tool filtering, and
+document/OCR extraction. Every network call is mocked and every
+filesystem/database operation is isolated to a temp directory — nothing in
+the suite touches your real `skills/`, `pipelines/`, or `memory/`.
 
 > [!NOTE]
 > There's no CI workflow wired up yet, so the badge above is a static
 > count from the last full run (`uv run pytest`), not a live status
 > check — verify it yourself with the command above rather than trusting
 > the badge blindly.
+
+### Real-world scenarios
+
+```bash
+uv run tests/scenarios.py          # all 5
+uv run tests/scenarios.py --only 2 # just one
+```
+
+The mocked suite above verifies individual functions in isolation, which
+has repeatedly missed real bugs that only showed up once the actual model
+decided how to use the actual tools together - a stale-bytecode bug after
+overwriting a skill, `forget()` silently failing on a paraphrase, a single
+tool result blowing the context window, an embedding-similarity threshold
+that missed real contradictions. `tests/scenarios.py` runs 5 realistic
+multi-step tasks against the **live** Qwen (and E2B, if configured)
+endpoint - each modeled on a task that actually surfaced one of those bugs
+during development:
+
+1. **Document + skill chain** - read a real `.docx`, convert facts from it
+   with existing skills, verify the numbers are correct
+2. **Skill lifecycle** - create, overwrite, and roll back a skill,
+   verifying the *live* code actually changes at each step
+3. **Memory contradiction + fuzzy forget** - state a preference, restate a
+   contradicting one in different words, verify the old one is superseded;
+   forget a fact by paraphrase instead of exact quote
+4. **Plan-mode boundary** - a mixed read-only/mutating task in plan mode,
+   verifying the mutating step is blocked and a plan is produced, then
+   verifying the same action actually executes after `/auto`
+5. **Long/heavy turn** - a task that reads a meaningful amount of real
+   content across several tool calls, verifying no context-window error
+   and a structurally valid conversation throughout
+
+`SKILLS_DIR`/`MEMORY_DIR`/`PIPELINES_DIR` are redirected to a fresh temp
+directory before anything is imported, so this never touches your real
+`skills/`, `pipelines/`, or `memory/` - only the live model/sandbox calls
+are real. Worth re-running whenever a feature touching tool calling,
+skills, memory, or context management ships - this is what actually
+caught the bugs above, not the mocked suite.
 
 ## Environment variables
 

@@ -325,6 +325,18 @@ def _import_skill(name: str):
     return module
 
 
+# Hard ceiling on a skill's serialized result, matching the ceiling every
+# other content-returning tool already enforces (read_file/sandbox_read_file:
+# MAX_READ_CHARS_CEILING=40000, scrape_page: 20000, run_python stdout/stderr:
+# 4000). Real gap this closes: run_skill had NO size limit at all - a skill
+# fetching an external API (e.g. the real unsplash_search skill, or any
+# future skill composing an HTTP call) can return an arbitrarily large JSON
+# payload, and a single such tool result can blow the context window the
+# same way the base64-through-conversation bug once did (that one was fixed
+# by capping read paths; this path was never capped at all).
+MAX_RESULT_CHARS = 40000
+
+
 def run_skill(name: str, args: dict) -> dict:
     entry = get_skill(name)
     if entry is None:
@@ -332,6 +344,28 @@ def run_skill(name: str, args: dict) -> dict:
     try:
         module = _import_skill(name)
         result = module.run(**args)
-        return {"result": result}
     except Exception as e:
         return {"error": f"{type(e).__name__}: {e}", "traceback": traceback.format_exc()}
+
+    try:
+        serialized = json.dumps(result)
+    except (TypeError, ValueError) as e:
+        return {"error": f"skill '{name}' returned a non-JSON-serializable value: {e}"}
+
+    if len(serialized) <= MAX_RESULT_CHARS:
+        return {"result": result}
+
+    # Truncating the raw result naively would produce invalid JSON/broken
+    # structure the model can't parse at all - truncate the serialized
+    # string instead and say so explicitly, rather than silently returning
+    # a corrupted partial structure.
+    return {
+        "result_truncated": True,
+        "original_length": len(serialized),
+        "truncated_json_string": serialized[:MAX_RESULT_CHARS],
+        "note": (
+            f"This skill's result was {len(serialized)} chars, over the {MAX_RESULT_CHARS}-char "
+            "limit, so it was truncated to a raw JSON string (may not be valid/complete JSON at "
+            "the cut point). Consider having the skill itself limit/paginate its output."
+        ),
+    }

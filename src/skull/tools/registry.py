@@ -987,6 +987,8 @@ def _summarize_result(result) -> str:
             return f"fetched {n} chars" + (" (truncated)" if result.get("truncated") else "")
         if "result" in result:
             return json.dumps(result["result"])[:80]
+        if result.get("result_truncated"):
+            return f"result truncated ({result.get('original_length')} chars, over limit)"
         if "stdout" in result:
             out = result["stdout"].strip().splitlines()
             first_line = out[0] if out else "(no output)"

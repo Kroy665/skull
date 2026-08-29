@@ -51,6 +51,43 @@ class Session:
     def reset_messages(self):
         self.messages = [{"role": "system", "content": self.system_prompt}]
 
+    def _skill_ranking_query(self, user_input: str, turn_messages: list) -> str:
+        """Build the text used to rank which saved skills are relevant
+        enough to send this round-trip (see build_tools_and_impls' `query`).
+
+        Real gap this fixes: using just the original user_input, frozen for
+        the whole turn, meant a skill the model only realizes it needs AFTER
+        seeing an earlier tool's result (e.g. "check disk space" -> low
+        space found -> now wants to call a notification/email skill never
+        mentioned in the original phrasing) could rank below the relevance
+        threshold and simply not appear in the tool list on a later
+        round-trip - not silently, since the model would get an "unknown
+        tool" error if it guessed the name anyway, but with no way to
+        actually complete the task in one turn. Folding in what's actually
+        happened so far this turn (tool names called, a bounded snippet of
+        their results, and the assistant's own reasoning) lets the ranking
+        reflect what the model has since learned it needs, not just what
+        the user originally typed.
+
+        Bounded to the last few turn messages and a short snippet of each,
+        so this doesn't let a single large tool result balloon the ranking
+        query (and, with it, the per-round-trip embedding cost) without limit.
+        """
+        MAX_CONTEXT_MESSAGES = 6
+        MAX_SNIPPET_CHARS = 200
+
+        parts = [user_input]
+        for m in turn_messages[-MAX_CONTEXT_MESSAGES:]:
+            role = m.get("role")
+            if role == "assistant":
+                if m.get("content"):
+                    parts.append(m["content"][:MAX_SNIPPET_CHARS])
+                for tc in m.get("tool_calls") or []:
+                    parts.append(tc["function"]["name"])
+            elif role == "tool":
+                parts.append((m.get("content") or "")[:MAX_SNIPPET_CHARS])
+        return "\n".join(parts)
+
     def handle_turn(self, user_input: str) -> bool:
         """Append the user's message and run the assistant turn to completion,
         executing any tool calls in a loop.
@@ -88,12 +125,17 @@ class Session:
             # (e.g. create_skill just now) must be callable on the very next
             # model call. `query` scopes which saved skills' schemas are
             # actually sent once the skill count is large (see
-            # SKILL_FILTER_THRESHOLD) - always_include_skills keeps a skill
-            # already called earlier this turn from disappearing on the next
-            # round-trip just because the relevance ranking shifted.
+            # SKILL_FILTER_THRESHOLD) - built from the turn's accumulated
+            # context (see _skill_ranking_query), not just the original
+            # user_input, so a skill only discovered as relevant after an
+            # earlier tool result still has a chance to rank in.
+            # always_include_skills keeps a skill already called earlier
+            # this turn from disappearing on the next round-trip just
+            # because the relevance ranking shifted.
+            ranking_query = self._skill_ranking_query(user_input, messages[checkpoint + 1:])
             tools, impls = build_tools_and_impls(
                 plan_mode=self.plan_mode,
-                query=user_input,
+                query=ranking_query,
                 always_include_skills=skills_used_this_turn,
             )
 

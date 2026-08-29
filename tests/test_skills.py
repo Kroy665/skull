@@ -2,6 +2,8 @@
 get/run/delete round-trip, and the guardrails around writing untrusted,
 model-authored code to disk)."""
 
+import json
+
 from skull.tools import skills as sm
 
 SIMPLE_PARAMS = {"type": "object", "properties": {"n": {"type": "integer"}}, "required": ["n"]}
@@ -215,6 +217,61 @@ def test_run_skill_captures_internal_exception(isolated_skills_dir):
     assert "error" in outcome
     assert "boom" in outcome["error"]
     assert "traceback" in outcome
+
+
+# ---------------------------------------------------------------------------
+# run_skill output truncation - real gap found via code review: unlike
+# every other content-returning tool (run_python: 4000 chars,
+# read_file/sandbox_read_file: 40000-char ceiling, scrape_page: 20000),
+# run_skill had NO output size limit at all. A real skill (unsplash_search)
+# already returns an uncapped API response; any skill fetching external
+# data has the same exposure to blowing the context window in one call.
+# ---------------------------------------------------------------------------
+
+HUGE_RESULT_CODE = """
+def run(**kwargs):
+    return {"data": "x" * 100000}
+"""
+
+NON_JSON_SERIALIZABLE_CODE = """
+def run(**kwargs):
+    return {"bad": object()}
+"""
+
+
+def test_run_skill_passes_through_small_results_unchanged(isolated_skills_dir):
+    sm.create_skill("doubler", "doubles a number", SIMPLE_PARAMS, DOUBLE_CODE)
+    outcome = sm.run_skill("doubler", {"n": 5})
+    assert outcome == {"result": {"doubled": 10}}
+    assert "result_truncated" not in outcome
+
+
+def test_run_skill_truncates_oversized_result(isolated_skills_dir):
+    sm.create_skill("huge", "returns a huge result", SIMPLE_PARAMS, HUGE_RESULT_CODE)
+    outcome = sm.run_skill("huge", {"n": 1})
+
+    assert outcome["result_truncated"] is True
+    assert outcome["original_length"] > sm.MAX_RESULT_CHARS
+    assert len(outcome["truncated_json_string"]) == sm.MAX_RESULT_CHARS
+    assert "note" in outcome
+    assert "result" not in outcome  # the raw (huge) result must not also be present
+
+
+def test_run_skill_truncation_marker_is_always_valid_json(isolated_skills_dir):
+    """The truncated payload itself (the wrapper dict) must always be valid
+    JSON the model can parse, even though truncated_json_string's CONTENT
+    may be cut mid-structure - truncating the raw result naively (instead
+    of via this wrapper) would risk returning an unparseable blob."""
+    sm.create_skill("huge", "returns a huge result", SIMPLE_PARAMS, HUGE_RESULT_CODE)
+    outcome = sm.run_skill("huge", {"n": 1})
+    reserialized = json.dumps(outcome)  # must not raise
+    assert json.loads(reserialized) == outcome
+
+
+def test_run_skill_rejects_non_json_serializable_result(isolated_skills_dir):
+    sm.create_skill("bad_return", "returns something unserializable", SIMPLE_PARAMS, NON_JSON_SERIALIZABLE_CODE)
+    outcome = sm.run_skill("bad_return", {"n": 1})
+    assert "error" in outcome
 
 
 def test_delete_skill_removes_files_and_registry_entry(isolated_skills_dir):

@@ -165,29 +165,45 @@ class VectorStore:
             for id_, text, metadata_json, superseded_by in rows
         ]
 
+    def _find_live_id(self, text: str) -> int | None:
+        """Find the id of the LIVE (not already superseded) entry matching
+        `text` exactly, preferring the most recently added if more than one
+        live row somehow has the same text (e.g. the model re-storing an
+        identical phrasing in two different sessions - text has no
+        uniqueness constraint). Real bug this guards against: without the
+        superseded_by filter and an explicit ORDER BY, an unordered `LIMIT 1`
+        could match an already-dead duplicate instead of the current one,
+        silently re-marking the wrong row while still reporting success."""
+        row = self._db.execute(
+            "select id from entries where text = ? and superseded_by is null order by id desc limit 1",
+            (text,),
+        ).fetchone()
+        return row[0] if row else None
+
     def mark_superseded(self, old_text: str, new_text: str) -> dict:
         """Mark the entry matching `old_text` as superseded by the entry
         matching `new_text` - it stays in the database (visible via
         history()) but is excluded from search()/all()/count() from now on."""
-        old_row = self._db.execute("select id from entries where text = ? limit 1", (old_text,)).fetchone()
-        new_row = self._db.execute("select id from entries where text = ? limit 1", (new_text,)).fetchone()
-        if old_row is None or new_row is None:
+        old_id = self._find_live_id(old_text)
+        new_id = self._find_live_id(new_text)
+        if old_id is None or new_id is None:
             return {"error": "one or both facts not found", "superseded": False}
 
         with self._db:
-            self._db.execute("update entries set superseded_by = ? where id = ?", (new_row[0], old_row[0]))
+            self._db.execute("update entries set superseded_by = ? where id = ?", (new_id, old_id))
         return {"status": "superseded", "superseded": True}
 
     def delete(self, text: str) -> dict:
-        """Remove the entry whose text exactly matches `text`. Exact match
-        (rather than an index) so callers can reference a fact by quoting it
-        back, e.g. after finding it via search() - positions aren't stable
-        identifiers once other entries are added or removed."""
-        row = self._db.execute("select id from entries where text = ? limit 1", (text,)).fetchone()
-        if row is None:
+        """Remove the LIVE entry whose text exactly matches `text`. Exact
+        match (rather than an index) so callers can reference a fact by
+        quoting it back, e.g. after finding it via search() - positions
+        aren't stable identifiers once other entries are added or removed.
+        Only ever targets a live (non-superseded) row - an already-dead
+        duplicate is not a valid target even if its text also matches."""
+        entry_id = self._find_live_id(text)
+        if entry_id is None:
             return {"error": "no matching entry found", "deleted": False}
 
-        entry_id = row[0]
         with self._db:
             self._db.execute("delete from entries where id = ?", (entry_id,))
             self._db.execute("delete from vec_items where rowid = ?", (entry_id,))

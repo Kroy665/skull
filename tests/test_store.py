@@ -185,6 +185,61 @@ def test_mark_superseded_missing_fact_returns_error(isolated_memory_dir):
     assert result == {"error": "one or both facts not found", "superseded": False}
 
 
+def test_mark_superseded_targets_the_live_duplicate_not_a_dead_one(isolated_memory_dir):
+    """Real bug: text has no uniqueness constraint, so the same phrasing can
+    exist twice - once already superseded, once live (e.g. the model
+    re-storing an identical sentence in a later session). Without filtering
+    to superseded_by IS NULL and an explicit ORDER BY, an unordered
+    `LIMIT 1` lookup could match the DEAD duplicate instead of the current
+    one - silently re-marking the wrong row while still reporting success,
+    leaving the actually-current fact live and un-superseded."""
+    store = mem.get_store("persona")
+
+    store.add("User likes tea")  # id 1 - will become dead
+    store.add("User likes coffee")  # id 2
+    store.mark_superseded("User likes tea", "User likes coffee")  # id 1 dead, superseded_by=2
+
+    store.add("User likes tea")  # id 3 - a NEW live duplicate of the dead id 1's text
+    store.add("User switched to oolong")  # id 4
+
+    result = store.mark_superseded("User likes tea", "User switched to oolong")
+    assert result == {"status": "superseded", "superseded": True}
+
+    # id 3 (the live duplicate) must be the one superseded now - not id 1,
+    # which is already dead and irrelevant to this correction.
+    history = store.history()
+    entry_3 = next(e for e in history if e["id"] == 3)
+    assert entry_3["superseded_by"] is not None, "the live duplicate must now be superseded"
+
+    # The fact must no longer be recalled as current truth.
+    live_texts = [e["text"] for e in store.all()]
+    assert "User likes tea" not in live_texts
+    assert "User switched to oolong" in live_texts
+
+
+def test_delete_targets_the_live_duplicate_not_a_dead_one(isolated_memory_dir):
+    """Same duplicate-text hazard as mark_superseded, for delete(): must
+    never delete an already-superseded duplicate when a live one with the
+    same text exists - the live one is the one the caller means."""
+    store = mem.get_store("persona")
+
+    store.add("User likes tea")  # id 1 - will become dead
+    store.add("User likes coffee")
+    store.mark_superseded("User likes tea", "User likes coffee")
+
+    store.add("User likes tea")  # id 3 - live duplicate
+
+    result = store.delete("User likes tea")
+    assert result["deleted"] is True
+
+    # The live duplicate (id 3) must be gone; the dead one (id 1) must be
+    # untouched, since deleting it would be deleting the wrong row entirely.
+    history = store.history()
+    ids_remaining = {e["id"] for e in history}
+    assert 3 not in ids_remaining
+    assert 1 in ids_remaining
+
+
 def test_history_includes_superseded_facts(isolated_memory_dir):
     store = mem.get_store("persona")
     store.add("old fact")

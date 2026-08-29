@@ -17,7 +17,7 @@ from skull.config import (
     YELLOW,
     load_system_prompt,
 )
-from skull.core.client import stream_chat
+from skull.core.client import StreamParseError, stream_chat
 from skull.core.compaction import compact_if_needed, estimate_tokens, COMPACT_TRIGGER_TOKENS
 from skull.core.memory_context import (
     PLAN_MODE_ADDENDUM,
@@ -143,6 +143,18 @@ class Session:
             except requests.RequestException as e:
                 spinner.stop()
                 tprint(f"{YELLOW}Request failed: {e}{RESET}")
+                del messages[checkpoint:]
+                return False
+            except StreamParseError as e:
+                # A bad PAYLOAD on an otherwise-successful response (e.g.
+                # the self-hosted endpoint restarting mid-stream) - not a
+                # connection failure, so it wasn't covered by the
+                # requests.RequestException catches above. Without this,
+                # it propagated all the way out of the REPL loop (which
+                # doesn't wrap handle_turn at all) and killed the whole
+                # process, losing the conversation.
+                spinner.stop()
+                tprint(f"{YELLOW}Streaming response error: {e}{RESET}")
                 del messages[checkpoint:]
                 return False
             finally:

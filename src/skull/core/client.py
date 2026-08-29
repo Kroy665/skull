@@ -10,6 +10,21 @@ from skull.ui.output import tprint, twrite
 from skull.ui.spinner import Spinner
 
 
+class StreamParseError(Exception):
+    """A server-sent-events line couldn't be parsed as the expected chunk
+    shape (malformed/truncated JSON, or a chunk missing choices/delta).
+    Distinct from requests.RequestException - this is a bad PAYLOAD on an
+    otherwise-successful HTTP response, not a network/connection failure,
+    and needs its own handling in the caller rather than crashing the
+    whole process. Real gap this closes: json.loads()/dict-key access on
+    each streamed line had no error handling at all, so a single malformed
+    chunk (e.g. a self-hosted endpoint restarting mid-stream, or a chunk
+    variance in the response shape) would propagate all the way out of
+    handle_turn's try/except (which only catches requests exceptions) and
+    out of the REPL loop (which doesn't wrap handle_turn at all), killing
+    the entire session and losing the conversation."""
+
+
 def stream_chat(messages: list, tools: list, spinner: Spinner = None):
     """Stream one chat completion turn, printing content tokens as they arrive.
 
@@ -66,9 +81,18 @@ def stream_chat(messages: list, tools: list, spinner: Spinner = None):
         data = line[len("data: "):]
         if data.strip() == "[DONE]":
             break
-        chunk = json.loads(data)
-        choice = chunk["choices"][0]
-        delta = choice["delta"]
+        try:
+            chunk = json.loads(data)
+            choice = chunk["choices"][0]
+            delta = choice["delta"]
+        except (json.JSONDecodeError, KeyError, IndexError) as e:
+            if spinner and not spinner_stopped:
+                spinner.stop()
+                spinner_stopped = True
+            raise StreamParseError(
+                f"malformed chunk from the model endpoint mid-stream ({type(e).__name__}: {e}) "
+                f"- raw line: {data[:200]!r}"
+            ) from e
 
         if choice.get("finish_reason"):
             finish_reason = choice["finish_reason"]

@@ -127,6 +127,15 @@ def run_command(
     }
 
 
+def _close_log_handle_if_open(info: dict) -> None:
+    handle = info.get("log_handle")
+    if handle is not None and not handle.closed:
+        try:
+            handle.close()
+        except Exception:
+            pass
+
+
 def list_background_commands() -> dict:
     with _background_lock:
         entries = list(_background_processes.items())
@@ -135,6 +144,17 @@ def list_background_commands() -> dict:
     for pid, info in entries:
         proc = info["process"]
         exit_code = proc.poll()
+        if exit_code is not None:
+            # The process exited on its own (crashed, or finished a
+            # one-shot job) - nothing will ever write to this log file
+            # again, so close the handle now rather than leaking it for
+            # the rest of the process's lifetime. Real gap this closes:
+            # previously only stop_background_command's (unreachable, see
+            # its own fix) path and the never-called
+            # clear_background_processes() ever closed a log handle, so a
+            # background command that simply exited on its own leaked its
+            # file descriptor for as long as this process kept running.
+            _close_log_handle_if_open(info)
         results.append(
             {
                 "pid": pid,
@@ -170,8 +190,10 @@ def stop_background_command(pid: int) -> dict:
         return {"error": f"no background process with pid {pid}"}
 
     proc = info["process"]
-    if proc.poll() is not None:
-        return {"status": "already exited", "pid": pid, "exit_code": proc.poll()}
+    exit_code = proc.poll()
+    if exit_code is not None:
+        _close_log_handle_if_open(info)
+        return {"status": "already exited", "pid": pid, "exit_code": exit_code}
 
     # The process was started with shell=True + start_new_session=True, so
     # `pid` is the shell wrapper, and it may have already exec'd or forked
@@ -198,6 +220,7 @@ def stop_background_command(pid: int) -> dict:
         except subprocess.TimeoutExpired:
             return {"error": f"process group {pid} did not exit even after SIGKILL"}
 
+    _close_log_handle_if_open(info)
     return {"status": "stopped", "pid": pid}
 
 

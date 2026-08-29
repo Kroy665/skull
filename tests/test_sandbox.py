@@ -32,8 +32,11 @@ def _fake_sandbox_with_files(files_content=None, download_urls=None):
     sbx = FakeSandbox(files_content, download_urls)
 
     class _Files:
-        def read(self_inner, path):
-            return files_content[path]
+        def read(self_inner, path, format="text"):
+            content = files_content[path]
+            if format == "bytes":
+                return bytearray(content if isinstance(content, bytes) else content.encode())
+            return content
 
     sbx.files = _Files()
     return sbx
@@ -78,6 +81,32 @@ def test_sandbox_read_file_default_max_chars_unaffected(monkeypatch):
 
 def test_sandbox_read_file_missing_path_returns_error():
     assert "error" in sandbox.sandbox_read_file("")
+
+
+def test_sandbox_read_file_auto_extracts_docx_content(monkeypatch):
+    import io
+
+    import docx
+
+    doc = docx.Document()
+    doc.add_paragraph("Sandbox-generated paragraph.")
+    buf = io.BytesIO()
+    doc.save(buf)
+
+    sbx = _fake_sandbox_with_files(files_content={"/tmp/out.docx": buf.getvalue()})
+    monkeypatch.setattr(sandbox, "_get_sandbox", lambda: sbx)
+
+    result = sandbox.sandbox_read_file("/tmp/out.docx")
+    assert result["extracted"] is True
+    assert "Sandbox-generated paragraph." in result["content"]
+
+
+def test_sandbox_read_file_extraction_failure_returns_error(monkeypatch):
+    sbx = _fake_sandbox_with_files(files_content={"/tmp/fake.docx": b"not a real docx"})
+    monkeypatch.setattr(sandbox, "_get_sandbox", lambda: sbx)
+
+    result = sandbox.sandbox_read_file("/tmp/fake.docx")
+    assert "error" in result
 
 
 # ---------------------------------------------------------------------------

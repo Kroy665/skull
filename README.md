@@ -14,9 +14,11 @@ mode.
   file (a `.docx`, image, zip, etc.) straight onto your machine as raw bytes
   (`download_from_sandbox`, requires your y/n approval) — no base64-through-
   the-conversation detour that would otherwise burn a huge chunk of context
-- Read files on your own machine freely (`read_file`, `list_directory`); writing
-  (`write_file`) and running shell commands (`run_command`) require your
-  explicit y/n approval every time, since those touch your real filesystem
+- Read files on your own machine freely (`read_file`, `list_directory`) —
+  PDF, DOCX, XLSX/XLSM, and PPTX are automatically extracted to readable
+  text, everything else is read as plain text; writing (`write_file`) and
+  running shell commands (`run_command`) require your explicit y/n approval
+  every time, since those touch your real filesystem
 - **Background processes** — `run_command(background=true)` starts a
   long-running process (a dev server, a watcher) detached and returns
   immediately, instead of hanging until timeout; manage it with
@@ -112,6 +114,7 @@ src/skull/
         pipeline.py               skill DAGs: validation, topological execution (pipelines/<name>/)
         shell.py                 run_command (gated) + background process management
         files.py                 local read_file/write_file/list_directory
+        document.py              PDF/DOCX/XLSX/PPTX text extraction, shared by files.py and sandbox.py
         permission.py            shared interactive y/n approval prompt
     storage/
         store.py                 local vector store (persona facts + conversation history), backed by SQLite + sqlite-vec

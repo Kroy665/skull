@@ -184,7 +184,9 @@ BUILTIN_TOOLS = [
             "name": "read_file",
             "description": (
                 "Read a file from the user's own machine, anywhere on the filesystem. "
-                "Read-only, no approval needed."
+                "PDF, DOCX, XLSX/XLSM, and PPTX are automatically extracted to readable "
+                "text (result includes \"extracted\": true) - everything else is read as "
+                "plain text. Read-only, no approval needed."
             ),
             "parameters": {
                 "type": "object",
@@ -246,10 +248,12 @@ BUILTIN_TOOLS = [
         "function": {
             "name": "sandbox_read_file",
             "description": (
-                "Read a TEXT file from the isolated E2B sandbox filesystem (not the "
-                "user's machine - see read_file for that) - for content you want to "
-                "inspect, not deliver. For binary output (.docx/.pdf/.png/.zip, etc.) "
-                "or anything meant to end up on the user's machine, use "
+                "Read a file from the isolated E2B sandbox filesystem (not the user's "
+                "machine - see read_file for that) - for content you want to inspect, "
+                "not deliver. PDF, DOCX, XLSX/XLSM, and PPTX are automatically extracted "
+                "to readable text (result includes \"extracted\": true); other text files "
+                "are read as-is. For any OTHER binary output (image, zip, etc.) or "
+                "anything meant to end up on the user's machine, use "
                 "download_from_sandbox instead - do not base64-encode a binary file "
                 "and read it through here, it wastes enormous context for no benefit. "
                 "No approval needed, same trust level as run_python."

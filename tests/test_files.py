@@ -59,6 +59,28 @@ def test_read_file_default_max_chars_unaffected_by_ceiling_change(tmp_path):
     assert result["truncated"] is True
 
 
+def test_read_file_auto_extracts_docx_content(tmp_path):
+    import docx
+
+    doc = docx.Document()
+    doc.add_paragraph("Extracted paragraph text.")
+    p = tmp_path / "doc.docx"
+    doc.save(str(p))
+
+    result = files.read_file(str(p))
+    assert result["extracted"] is True
+    assert "Extracted paragraph text." in result["content"]
+
+
+def test_read_file_extraction_failure_returns_error(tmp_path):
+    """A file with a document extension but corrupt/non-document content
+    must return a clean error, not crash the tool call."""
+    p = tmp_path / "fake.docx"
+    p.write_bytes(b"not actually a docx")
+    result = files.read_file(str(p))
+    assert "error" in result
+
+
 def test_list_directory_lists_files_and_dirs(tmp_path):
     (tmp_path / "a.txt").write_text("")
     (tmp_path / "subdir").mkdir()

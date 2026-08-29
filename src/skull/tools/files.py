@@ -10,6 +10,7 @@ run_command already having unrestricted shell access.
 
 from pathlib import Path
 
+from skull.tools import document
 from skull.tools.permission import ask_permission
 
 MAX_READ_CHARS = 20000
@@ -38,6 +39,14 @@ def read_file(path: str, max_chars: int = MAX_READ_CHARS) -> dict:
         return {"error": f"no such file: {p}"}
     if p.is_dir():
         return {"error": f"{p} is a directory, not a file - use list_directory instead"}
+
+    if document.is_extractable(str(p)):
+        try:
+            text = document.extract_text(str(p), p.read_bytes())
+        except Exception as e:
+            return {"error": f"failed to extract text from {p}: {e}"}
+        truncated = len(text) > max_chars
+        return {"path": str(p), "content": text[:max_chars], "truncated": truncated, "extracted": True}
 
     try:
         text = p.read_text(errors="replace")

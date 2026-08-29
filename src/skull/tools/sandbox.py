@@ -16,6 +16,7 @@ from pathlib import Path
 import requests
 from e2b_code_interpreter import Sandbox
 
+from skull.tools import document
 from skull.tools.permission import ask_permission
 
 RUN_TIMEOUT_SECONDS = 15
@@ -110,6 +111,18 @@ def sandbox_read_file(path: str, max_chars: int = MAX_FILE_READ_CHARS) -> dict:
         sbx = _get_sandbox()
     except RuntimeError as e:
         return {"error": str(e)}
+
+    if document.is_extractable(path):
+        try:
+            data = bytes(sbx.files.read(path, format="bytes"))
+        except Exception as e:
+            return {"error": f"failed to read {path} from sandbox: {e}"}
+        try:
+            text = document.extract_text(path, data)
+        except Exception as e:
+            return {"error": f"failed to extract text from {path}: {e}"}
+        truncated = len(text) > max_chars
+        return {"path": path, "content": text[:max_chars], "truncated": truncated, "extracted": True}
 
     try:
         text = sbx.files.read(path)

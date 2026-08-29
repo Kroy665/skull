@@ -1,23 +1,22 @@
 #!/usr/bin/env -S uv run
-"""Entry point for the skull terminal chat client.
+"""Local-development entry point - for a real installed command, use
+`skull` instead (see [project.scripts] in pyproject.toml, and
+src/skull/cli.py). This just delegates to the same code path, kept around
+for the `uv run chat.py` workflow while developing this repo directly.
 
 Usage:
     ./chat.py
     uv run chat.py
 
-Env vars:
+Env vars (also settable in ~/.config/skull/.env once installed for real -
+see skull.config.CONFIG_DIR):
     QWEN_KEY     - bearer token (required)
     QWEN_URL     - base URL, defaults to https://qwen.your-endpoint.example
     QWEN_MODEL   - model name, defaults to qwen3.8-27b
     E2B_API_KEY  - enables the run_python sandbox tool (optional)
 """
 
-try:
-    import readline  # noqa: F401  (importing wires up arrow keys/history for input())
-except ImportError:
-    pass  # not available on some platforms (e.g. plain Windows) - degrades gracefully
-
-from skull.core.session import run
+from skull.cli import main
 
 if __name__ == "__main__":
-    run()
+    main()

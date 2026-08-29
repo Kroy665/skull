@@ -21,6 +21,9 @@ dependencies = [
     "pillow>=12.3.0",
 ]
 
+[project.scripts]
+skull = "skull.cli:main"
+
 [dependency-groups]
 dev = [
     "pytest",

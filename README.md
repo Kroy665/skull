@@ -5,7 +5,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white" alt="Python 3.12+">
   <img src="https://img.shields.io/badge/package%20manager-uv-DE5FE9" alt="Package manager: uv">
-  <img src="https://img.shields.io/badge/tests-243%20passing-4c9a2a" alt="243 tests">
+  <img src="https://img.shields.io/badge/tests-264%20passing-4c9a2a" alt="264 tests">
   <img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="License: GPL-3.0">
 </p>
 
@@ -14,7 +14,7 @@
   with automatic fact supersession · document &amp; OCR reading · plan/auto execution modes
 </p>
 
-<p align="center"><sub>243 tests · zero external tokenizer dependency · every non-trivial feature below shipped with a real bug found by testing it against the live model, not reasoned out on paper</sub></p>
+<p align="center"><sub>264 tests · zero external tokenizer dependency · every non-trivial feature below shipped with a real bug found by testing it against the live model, not reasoned out on paper</sub></p>
 
 ---
 
@@ -74,7 +74,6 @@ the parts you didn't mean literally?
 - [Architecture](#architecture)
 - [Requirements](#requirements)
 - [Setup](#setup)
-- [Run](#run)
 - [In-session commands](#in-session-commands)
 - [Testing](#testing)
 - [Environment variables](#environment-variables)
@@ -231,9 +230,11 @@ normal callable tool on every future turn — no restart, no re-deploy.
 ## Architecture
 
 ```
-chat.py                        thin entry point (uv run chat.py)
+chat.py                        dev-workflow wrapper around cli.py (uv run chat.py)
 src/skull/
-    config.py                   env vars, project paths, terminal colors
+    cli.py                       console-script entry point (`skull`, installed via pyproject.toml)
+    config.py                    per-user config directory, env vars, terminal colors
+    SYSTEM_PROMPT.md              bundled default prompt, copied to the config dir on first run
     core/
         client.py                streaming chat-completion calls to the Qwen endpoint
         session.py                turn-handling loop + interactive REPL
@@ -244,11 +245,11 @@ src/skull/
         registry.py               tool schemas + dispatch, plan-mode filtering, skill relevance ranking
         web.py                    web_search / scrape_page
         sandbox.py                E2B sandbox execution for run_python + sandbox file I/O + download_from_sandbox
-        skills.py                 self-created skill storage (skills/<name>/)
+        skills.py                 self-created skill storage (<config dir>/skills/<name>/)
         skill_composition.py      call_skill() - lets a skill call another skill
         skill_env.py              secrets store for skills - credentials never pass through the model
         skill_analysis.py         static AST classifier: is a skill's code provably side-effect-free?
-        pipeline.py               skill DAGs: validation, topological execution (pipelines/<name>/)
+        pipeline.py               skill DAGs: validation, topological execution (<config dir>/pipelines/<name>/)
         shell.py                  run_command (gated) + background process management
         files.py                  local read_file/write_file/list_directory
         document.py               PDF/DOCX/XLSX/PPTX extraction + image OCR, shared by files.py and sandbox.py
@@ -260,17 +261,14 @@ src/skull/
         ghost_input.py             raw-terminal input with ghost text + history + bracketed paste
         suggestion.py              background "next question" prediction
         output.py                  terminal-safe print (explicit \r\n, avoids OPOST quirks)
-SYSTEM_PROMPT.md               the model's system prompt (editable without touching code)
-skills/                         self-created skills (starts empty, gitignored)
-pipelines/                      self-created skill pipelines/DAGs (starts empty, gitignored)
-memory/                         persona facts + conversation log (starts empty, gitignored)
-tests/                          243 unit tests (mocked) + 5 live-model scenarios (tests/scenarios.py)
+tests/                          264 unit tests (mocked) + 5 live-model scenarios (tests/scenarios.py)
 ```
 
-`skills/`, `pipelines/`, and `memory/` live at the project root (not
-inside `src/skull/`) since they're per-user runtime state, not part of
-the installed package — all three are gitignored, and accumulate as you
-use the app rather than something you'd commit or ship.
+Per-user data (skills, pipelines, memory, secrets, the editable system
+prompt, `.env`) lives in a standard per-user config directory — see
+[Setup](#setup) below — found the same way regardless of what directory
+the installed `skull` command is invoked from, not anything relative to
+this source tree.
 
 ## Requirements
 
@@ -285,25 +283,65 @@ use the app rather than something you'd commit or ship.
 
 ## Setup
 
+`skull` is a real installed command, runnable from any directory once
+set up — not tied to a project checkout. Per-user data (skills, memory,
+pipelines, secrets, the editable system prompt, and `.env`) lives in a
+standard per-user config directory, found automatically:
+
+| Platform | Config directory |
+|---|---|
+| Linux | `$XDG_CONFIG_HOME/skull` (usually `~/.config/skull`) |
+| macOS | `~/Library/Application Support/skull` |
+| Windows | `%APPDATA%\skull` |
+
+**Install** (via [uv](https://docs.astral.sh/uv/), or any `pip`):
+
 ```bash
-git clone https://github.com/Kroy665/skull.git
-cd skull
-cp .env.example .env
-# edit .env and fill in QWEN_KEY (required), E2B_API_KEY (optional)
-uv sync
+uv tool install skull
+# or: pipx install skull
+# or: pip install skull
 ```
 
-`uv sync` creates a `.venv` and installs every dependency, including a
-matching Python interpreter if needed — no manual pip install.
-
-## Run
+**Configure** — create `.env` in your config directory above with your
+Qwen credentials:
 
 ```bash
-uv run chat.py
+mkdir -p ~/.config/skull   # adjust for your platform, see table above
+cat > ~/.config/skull/.env <<'EOF'
+QWEN_KEY=your-key-here
+# QWEN_URL=https://your-endpoint
+# QWEN_MODEL=your-model-name
+# E2B_API_KEY=your-e2b-key   # optional, enables run_python
+EOF
+```
+
+**Run** from anywhere:
+
+```bash
+skull
 ```
 
 On first run, a local sentence-embedding model (~90MB) downloads once for
-the memory feature.
+the memory feature, and a default `SYSTEM_PROMPT.md` is copied into your
+config directory (editable there without touching any installed code).
+
+<details>
+<summary>Developing skull itself, from a source checkout</summary>
+
+```bash
+git clone https://github.com/Kroy665/skull.git
+cd skull
+uv sync
+uv run chat.py
+```
+
+`uv sync` creates a `.venv` and installs every dependency, including a
+matching Python interpreter if needed. `chat.py` is a thin wrapper around
+the same `skull` command, kept for this workflow — it still reads/writes
+the same per-user config directory above, not anything relative to the
+checkout.
+
+</details>
 
 ## In-session commands
 
@@ -325,7 +363,7 @@ Tab or Right-arrow (on an empty line) accepts an inline suggestion.
 uv run pytest
 ```
 
-243 tests across 15 files, covering context compaction, skill/pipeline
+264 tests across 16 files, covering context compaction, skill/pipeline
 CRUD and execution (all validation error paths, fan-out/fan-in, mid-run
 failure handling), the vector store (search ranking, delete integrity,
 schema migration, and correctly targeting a live row over an

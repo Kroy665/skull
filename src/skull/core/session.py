@@ -7,6 +7,7 @@ import requests
 
 from skull.config import (
     BOLD,
+    CONFIG_DIR,
     DIM,
     GREEN,
     MAGENTA,
@@ -283,7 +284,11 @@ def _print_banner(session: Session):
 
 def run():
     if not QWEN_KEY:
-        print("Error: set QWEN_KEY in your environment.", file=sys.stderr)
+        print(
+            f"Error: QWEN_KEY is not set. Add it to {CONFIG_DIR / '.env'} "
+            "(e.g. QWEN_KEY=your-key-here), or set it as a real environment variable.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     scratch.clear_scratch()

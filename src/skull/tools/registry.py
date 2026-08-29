@@ -185,8 +185,13 @@ BUILTIN_TOOLS = [
             "description": (
                 "Read a file from the user's own machine, anywhere on the filesystem. "
                 "PDF, DOCX, XLSX/XLSM, and PPTX are automatically extracted to readable "
-                "text (result includes \"extracted\": true) - everything else is read as "
-                "plain text. Read-only, no approval needed."
+                "text (result includes \"extracted\": true). Image files (PNG/JPG/etc.) "
+                "are run through OCR to extract any TEXT that appears in the image - this "
+                "is text recognition only, NOT visual understanding, so it will not "
+                "describe a photo's content, only text visible within it (a screenshot, "
+                "scanned document, sign, etc.); expect an empty/near-empty result for a "
+                "photo with no text in it. Everything else is read as plain text. "
+                "Read-only, no approval needed."
             ),
             "parameters": {
                 "type": "object",
@@ -251,12 +256,14 @@ BUILTIN_TOOLS = [
                 "Read a file from the isolated E2B sandbox filesystem (not the user's "
                 "machine - see read_file for that) - for content you want to inspect, "
                 "not deliver. PDF, DOCX, XLSX/XLSM, and PPTX are automatically extracted "
-                "to readable text (result includes \"extracted\": true); other text files "
-                "are read as-is. For any OTHER binary output (image, zip, etc.) or "
-                "anything meant to end up on the user's machine, use "
-                "download_from_sandbox instead - do not base64-encode a binary file "
-                "and read it through here, it wastes enormous context for no benefit. "
-                "No approval needed, same trust level as run_python."
+                "to readable text (result includes \"extracted\": true); images are run "
+                "through OCR to extract visible TEXT only (not visual understanding - it "
+                "won't describe a photo, only text that appears in it); other text files "
+                "are read as-is. For any OTHER binary output (zip, etc.) or anything "
+                "meant to end up on the user's machine, use download_from_sandbox instead "
+                "- do not base64-encode a binary file and read it through here, it wastes "
+                "enormous context for no benefit. No approval needed, same trust level as "
+                "run_python."
             ),
             "parameters": {
                 "type": "object",

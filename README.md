@@ -16,9 +16,14 @@ mode.
   the-conversation detour that would otherwise burn a huge chunk of context
 - Read files on your own machine freely (`read_file`, `list_directory`) —
   PDF, DOCX, XLSX/XLSM, and PPTX are automatically extracted to readable
-  text, everything else is read as plain text; writing (`write_file`) and
-  running shell commands (`run_command`) require your explicit y/n approval
-  every time, since those touch your real filesystem
+  text; images (PNG/JPG/etc.) are OCR'd for any text they contain (requires
+  the `tesseract` binary — `brew install tesseract` on macOS). **This is text
+  recognition only, not vision** — the underlying model has no image
+  understanding (confirmed by testing: it can't actually see pixels, it
+  guesses), so OCR can pull text out of a screenshot or scanned page but
+  can't describe a photo. Everything else is read as plain text; writing
+  (`write_file`) and running shell commands (`run_command`) require your
+  explicit y/n approval every time, since those touch your real filesystem
 - **Background processes** — `run_command(background=true)` starts a
   long-running process (a dev server, a watcher) detached and returns
   immediately, instead of hanging until timeout; manage it with
@@ -57,6 +62,10 @@ mode.
 - A Qwen-compatible chat-completions API endpoint and key
 - Optional: an [E2B](https://e2b.dev) API key, to enable the `run_python`
   sandbox tool
+- Optional: the `tesseract` binary, to enable OCR on image files read via
+  `read_file`/`sandbox_read_file` (`brew install tesseract` on macOS,
+  `apt install tesseract-ocr` on Debian/Ubuntu) — without it, reading an
+  image file returns a clear error instead of a result
 
 ## Setup
 

@@ -19,11 +19,17 @@ def test_is_extractable_recognizes_supported_extensions():
     assert document.is_extractable("slides.pptx")
 
 
+def test_is_extractable_recognizes_image_extensions():
+    assert document.is_extractable("screenshot.png")
+    assert document.is_extractable("photo.jpg")
+    assert document.is_extractable("photo.JPEG")
+    assert document.is_extractable("scan.tiff")
+
+
 def test_is_extractable_rejects_other_extensions():
     assert not document.is_extractable("notes.txt")
     assert not document.is_extractable("script.py")
     assert not document.is_extractable("no_extension")
-    assert not document.is_extractable("image.png")
 
 
 def test_extract_text_raises_for_unsupported_extension():
@@ -109,3 +115,51 @@ def test_extract_pptx_returns_slide_text():
 def test_extract_pdf_malformed_data_raises():
     with pytest.raises(Exception):
         document.extract_text("doc.pdf", b"not a real pdf")
+
+
+# ---------------------------------------------------------------------------
+# Image OCR - skipped entirely if tesseract isn't installed on this machine,
+# since pytesseract is just a wrapper around the external binary.
+# ---------------------------------------------------------------------------
+
+requires_tesseract = pytest.mark.skipif(
+    not document.ocr_available(), reason="tesseract binary not installed"
+)
+
+
+def _render_text_image(text: str) -> bytes:
+    import io as _io
+
+    from PIL import Image, ImageDraw
+
+    img = Image.new("RGB", (400, 100), color="white")
+    draw = ImageDraw.Draw(img)
+    draw.text((10, 30), text, fill="black")
+    buf = _io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+@requires_tesseract
+def test_extract_image_ocr_reads_rendered_text():
+    data = _render_text_image("HELLO WORLD")
+    text = document.extract_text("screenshot.png", data)
+    assert "HELLO" in text.upper()
+
+
+@requires_tesseract
+def test_extract_image_with_no_text_returns_placeholder():
+    from PIL import Image
+
+    img = Image.new("RGB", (50, 50), color="white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+
+    text = document.extract_text("blank.png", buf.getvalue())
+    assert text == "(no text detected in image)"
+
+
+def test_extract_image_raises_clear_error_when_tesseract_missing(monkeypatch):
+    monkeypatch.setattr(document, "ocr_available", lambda: False)
+    with pytest.raises(RuntimeError, match="tesseract"):
+        document.extract_text("photo.png", b"fake image bytes")

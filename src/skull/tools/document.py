@@ -1,16 +1,27 @@
-"""Text extraction for common document formats (PDF, DOCX, XLSX, PPTX), so
-read_file/sandbox_read_file can return readable text instead of raw binary
-garbage when pointed at one of these. Dispatches purely on file extension -
-no content sniffing.
+"""Text extraction for common document formats (PDF, DOCX, XLSX, PPTX) and
+OCR for images (PNG, JPG, etc.), so read_file/sandbox_read_file can return
+readable text instead of raw binary garbage when pointed at one of these.
+Dispatches purely on file extension - no content sniffing.
 
 Takes raw bytes rather than a path, since the sandbox variant needs to fetch
 bytes over the network before extracting; the local variant just reads the
 file first. Keeps one extraction implementation shared by both callers.
+
+Image OCR (pytesseract) is a text-recognition tool, not vision - it reads
+text that appears in an image (a screenshot, a scanned page, a photo of a
+document). The chat model itself has no image understanding: this endpoint
+accepts an image_url content block without erroring, but silently ignores
+the pixel data and the model just guesses from the text prompt (confirmed
+by testing - it named the wrong color for solid-color test images). OCR is
+the only real way to get anything useful out of an image file here.
 """
 
 import io
+import shutil
 
-SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".xlsm", ".pptx"}
+DOCUMENT_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".xlsm", ".pptx"}
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".webp"}
+SUPPORTED_EXTENSIONS = DOCUMENT_EXTENSIONS | IMAGE_EXTENSIONS
 
 
 def is_extractable(path: str) -> bool:
@@ -35,7 +46,17 @@ def extract_text(path: str, data: bytes) -> str:
         return _extract_xlsx(data)
     if ext == ".pptx":
         return _extract_pptx(data)
+    if ext in IMAGE_EXTENSIONS:
+        return _extract_image(data)
     raise ValueError(f"unsupported extension for text extraction: {ext!r}")
+
+
+def ocr_available() -> bool:
+    """Whether the tesseract binary is actually installed - pytesseract is
+    just a wrapper around it and raises at call time (not import time) if
+    it's missing, so callers should check this before advertising OCR as
+    available."""
+    return shutil.which("tesseract") is not None
 
 
 def _extract_pdf(data: bytes) -> str:
@@ -88,3 +109,19 @@ def _extract_pptx(data: bytes) -> str:
                 texts.append(shape.text_frame.text.strip())
         slides.append(f"--- slide {i} ---\n" + "\n".join(texts))
     return "\n\n".join(slides)
+
+
+def _extract_image(data: bytes) -> str:
+    if not ocr_available():
+        raise RuntimeError(
+            "OCR requires the tesseract binary, which isn't installed "
+            "(install it with your system package manager, e.g. "
+            "`brew install tesseract` on macOS)"
+        )
+
+    import pytesseract
+    from PIL import Image
+
+    image = Image.open(io.BytesIO(data))
+    text = pytesseract.image_to_string(image).strip()
+    return text if text else "(no text detected in image)"

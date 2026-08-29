@@ -81,12 +81,21 @@ class Session:
         checkpoint = len(messages)
         messages.append({"role": "user", "content": user_input})
         malformed_retries = 0
+        skills_used_this_turn = set()
 
         while True:
             # Rebuild tools/impls every round-trip: a skill created mid-turn
             # (e.g. create_skill just now) must be callable on the very next
-            # model call.
-            tools, impls = build_tools_and_impls(plan_mode=self.plan_mode)
+            # model call. `query` scopes which saved skills' schemas are
+            # actually sent once the skill count is large (see
+            # SKILL_FILTER_THRESHOLD) - always_include_skills keeps a skill
+            # already called earlier this turn from disappearing on the next
+            # round-trip just because the relevance ranking shifted.
+            tools, impls = build_tools_and_impls(
+                plan_mode=self.plan_mode,
+                query=user_input,
+                always_include_skills=skills_used_this_turn,
+            )
 
             memory_block = build_memory_context(user_input)
             extra = memory_block + (PLAN_MODE_ADDENDUM if self.plan_mode else "")
@@ -192,6 +201,7 @@ class Session:
                         }
                     )
                 else:
+                    skills_used_this_turn.add(tc["function"]["name"])
                     tool_spinner = Spinner()
                     result = run_tool_call(tc, impls, self.verbose_tools, spinner=tool_spinner)
                 messages.append(

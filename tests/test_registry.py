@@ -145,3 +145,94 @@ def test_run_tool_call_impl_exception_is_captured_not_raised():
     result_json = registry.run_tool_call(tool_call, impls, verbose=False)
     result = json.loads(result_json)
     assert result == {"error": "kaboom"}
+
+
+# ---------------------------------------------------------------------------
+# build_tools_and_impls - skill relevance filtering (SKILL_FILTER_THRESHOLD)
+# ---------------------------------------------------------------------------
+
+SKILL_CODE = "def run(**kwargs):\n    return {'ok': True}\n"
+
+
+def _make_n_skills(n: int):
+    from skull.tools import skills as sm
+
+    for i in range(n):
+        sm.create_skill(f"skill_{i}", f"does thing number {i}", {"type": "object", "properties": {}}, SKILL_CODE)
+
+
+def test_below_threshold_sends_every_skill_without_query(isolated_skills_dir, isolated_memory_dir):
+    _make_n_skills(registry.SKILL_FILTER_THRESHOLD)  # exactly at threshold, not over it
+    tools, impls = registry.build_tools_and_impls(plan_mode=False, query="anything")
+    names = {t["function"]["name"] for t in tools}
+    for i in range(registry.SKILL_FILTER_THRESHOLD):
+        assert f"skill_{i}" in names
+
+
+def test_no_query_sends_every_skill_regardless_of_count(isolated_skills_dir, isolated_memory_dir):
+    """Without a query (query=None/empty), filtering never kicks in - callers
+    that don't have a natural query text (if any existed) get the full list
+    rather than an arbitrarily filtered one."""
+    _make_n_skills(registry.SKILL_FILTER_THRESHOLD + 5)
+    tools, impls = registry.build_tools_and_impls(plan_mode=False, query=None)
+    names = {t["function"]["name"] for t in tools}
+    for i in range(registry.SKILL_FILTER_THRESHOLD + 5):
+        assert f"skill_{i}" in names
+
+
+def test_above_threshold_filters_to_top_k_relevant_skills(isolated_skills_dir, isolated_memory_dir, monkeypatch):
+    """The isolated_memory_dir fixture's embedder is random noise (not
+    semantically meaningful) - true unrelated-text pairs from it cluster
+    near-zero cosine similarity, which can fall below SKILL_FILTER_MIN_SCORE
+    entirely and make top-K selection untestable through it. Use a
+    controlled fake embedder here instead, one that guarantees a clear
+    top-K winner well above the score floor, so this test isolates top-K
+    selection specifically rather than also depending on the noise
+    fixture clearing the min-score threshold by chance."""
+    from skull.storage import store as mem
+
+    def fake_embed(texts):
+        import numpy as np
+        # Text containing "number 3" gets a distinctive vector; everything
+        # else gets a near-orthogonal one.
+        vectors = []
+        for t in texts:
+            base = np.zeros(mem.EMBED_DIM, dtype=np.float32)
+            if "number 3" in t:
+                base[0] = 1.0
+            else:
+                base[1] = 1.0
+            vectors.append(base)
+        return np.array(vectors, dtype=np.float32)
+
+    monkeypatch.setattr(mem, "embed", fake_embed)
+
+    _make_n_skills(registry.SKILL_FILTER_THRESHOLD + 5)
+    tools, impls = registry.build_tools_and_impls(plan_mode=False, query="does thing number 3")
+    skill_names = {t["function"]["name"] for t in tools if t["function"]["name"].startswith("skill_")}
+    assert "skill_3" in skill_names  # the one clearly-relevant match must survive
+    assert len(skill_names) <= registry.SKILL_FILTER_TOP_K
+    assert len(skill_names) < registry.SKILL_FILTER_THRESHOLD + 5
+
+
+def test_always_include_skills_survive_filtering(isolated_skills_dir, isolated_memory_dir):
+    """A skill already used earlier this turn must not disappear from the
+    tool list just because the relevance ranking didn't favor it."""
+    _make_n_skills(registry.SKILL_FILTER_THRESHOLD + 5)
+    tools, impls = registry.build_tools_and_impls(
+        plan_mode=False, query="does thing number 3", always_include_skills={"skill_0", "skill_1"}
+    )
+    names = {t["function"]["name"] for t in tools}
+    assert "skill_0" in names
+    assert "skill_1" in names
+
+
+def test_filtered_skills_remain_individually_callable(isolated_skills_dir, isolated_memory_dir):
+    """Filtering only affects which schemas are *sent* to the model - every
+    skill's impl must still work if called (e.g. because it was included via
+    always_include, or the model recalls its name from an earlier listing)."""
+    _make_n_skills(registry.SKILL_FILTER_THRESHOLD + 5)
+    tools, impls = registry.build_tools_and_impls(
+        plan_mode=False, query="does thing number 3", always_include_skills={"skill_0"}
+    )
+    assert impls["skill_0"]({}) == {"result": {"ok": True}}

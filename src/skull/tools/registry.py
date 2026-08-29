@@ -69,12 +69,11 @@ BUILTIN_TOOLS = [
             "name": "run_python",
             "description": (
                 "Run a throwaway Python snippet in an isolated E2B cloud sandbox to test "
-                "an approach, debug logic, or inspect data - separate from create_skill, "
-                "which is for saving something reusable. The sandbox is fully isolated from "
-                "the local machine (no access to local files, network state, or credentials) "
-                "and persists variables/state across calls within one session, but is reset "
-                "at the start of every new session. Use print() to see output. Use this to "
-                "try something out BEFORE turning it into a skill with create_skill."
+                "an approach, debug, or inspect data - use before turning something into a "
+                "skill with create_skill, which is for saving something reusable. Fully "
+                "isolated from the local machine (no local files/network/credentials); "
+                "state persists across calls within a session, reset at session start. "
+                "Use print() to see output."
             ),
             "parameters": {
                 "type": "object",
@@ -94,19 +93,15 @@ BUILTIN_TOOLS = [
         "function": {
             "name": "run_command",
             "description": (
-                "Run a shell command directly on the user's own machine, with the user's "
-                "full permissions - use this only when a task genuinely requires touching "
-                "the local system (installing packages, inspecting local files/processes, "
-                "git operations, etc.) that run_python's isolated sandbox can't do. Every "
-                "call requires the user's explicit interactive y/n approval before it "
-                "executes, and may be denied - handle a denial gracefully rather than "
-                "retrying the same command. Prefer run_python or a self-created skill "
-                "whenever the task doesn't specifically require the local machine.\n\n"
-                "IMPORTANT: for a command that keeps running indefinitely (a dev server, "
-                "a file watcher, `npm run dev`, etc.), pass background=true. Without it, "
-                "the call blocks until the command exits or the timeout is hit - for a "
-                "server that never exits on its own, that just hangs and times out "
-                "without ever actually leaving it running for the user."
+                "Run a shell command on the user's own machine with their full "
+                "permissions - only for tasks genuinely requiring the local system "
+                "(package installs, local file/process inspection, git, etc.) that "
+                "run_python's isolated sandbox can't do. Requires interactive y/n "
+                "approval every call and may be denied - handle a denial gracefully, "
+                "don't retry the same command. Prefer run_python or a skill otherwise.\n\n"
+                "IMPORTANT: pass background=true for anything that runs indefinitely (dev "
+                "server, watcher, `npm run dev`) - without it the call blocks until exit "
+                "or timeout, so a never-exiting process just hangs and times out."
             ),
             "parameters": {
                 "type": "object",
@@ -356,17 +351,14 @@ META_TOOLS = [
             "name": "create_skill",
             "description": (
                 "Create a brand new reusable Python tool ('skill') when no existing tool "
-                "can solve the task. The code must define a top-level function "
-                "`run(**kwargs)` that returns a JSON-serializable value. Standard library "
-                "and already-installed third-party packages (requests, etc.) are available. "
-                "The skill is saved to disk and immediately becomes callable, in this "
-                "session and every future one.\n\n"
-                "A skill can call another existing skill instead of duplicating its logic: "
+                "can solve the task. Code must define a top-level `run(**kwargs)` "
+                "returning a JSON-serializable value. Stdlib and already-installed "
+                "packages (requests, etc.) are available. Saved to disk, immediately "
+                "callable this session and every future one.\n\n"
+                "To reuse another skill's logic instead of duplicating it: "
                 "`from skull.tools.skill_composition import call_skill` then "
-                "`result = call_skill('other_skill_name', **kwargs)` - it returns the "
-                "other skill's result directly, or raises SkillError on failure. Check "
-                "`list_skills` for what's already available before reimplementing "
-                "something a skill you (or an earlier session) already built could do."
+                "`call_skill('other_skill_name', **kwargs)` - returns its result "
+                "directly, raises SkillError on failure. Check list_skills first."
             ),
             "parameters": {
                 "type": "object",
@@ -496,26 +488,18 @@ META_TOOLS = [
         "function": {
             "name": "create_pipeline",
             "description": (
-                "Create a saved DAG ('pipeline') that chains existing skills together, "
-                "with explicit data flow between them - use this instead of writing one "
-                "big skill when a task is naturally a sequence of separate steps, "
-                "especially with fan-out (one step's output feeds several next steps) or "
-                "fan-in (one step needs outputs from several previous steps).\n\n"
-                "`nodes` is an object mapping a node id you choose (e.g. 'fetch', "
-                "'extract') to {\"type\": \"skill\", \"skill\": \"<existing skill name>\", "
-                "\"params\": {<literal fixed arguments, optional>}}. Every skill referenced "
-                "must already exist - check with list_skills first, and create any missing "
-                "one with create_skill before building the pipeline around it.\n\n"
-                "`edges` is a list of {\"from\": \"<node_id>.<field>\", \"to\": "
-                "\"<node_id>.<param>\"} - each one wires one node's output field into "
-                "another node's parameter. The pipeline's own call-time arguments are "
-                "available as the reserved pseudo-node 'input' (e.g. "
-                "{\"from\": \"input.url\", \"to\": \"fetch.url\"}). Every node parameter must "
-                "be set by EXACTLY ONE source - either a literal in that node's 'params', "
-                "or exactly one incoming edge - never both, never neither. The graph is "
-                "validated at creation time (no cycles, no unknown nodes/fields, no "
-                "unbound required parameters) and will report the specific problem rather "
-                "than silently failing later."
+                "Create a saved DAG ('pipeline') chaining existing skills with explicit "
+                "data flow - use instead of one big skill for a multi-step task, "
+                "especially with fan-out/fan-in. All referenced skills must already exist "
+                "(check list_skills, create_skill first if needed).\n\n"
+                "`nodes`: {node_id: {\"type\":\"skill\",\"skill\":\"<name>\","
+                "\"params\":{<literals, optional>}}}.\n"
+                "`edges`: [{\"from\":\"<node>.<field>\",\"to\":\"<node>.<param>\"}] - wires an "
+                "output field into another node's param. Call-time args are the reserved "
+                "'input' pseudo-node, e.g. {\"from\":\"input.url\",\"to\":\"fetch.url\"}.\n\n"
+                "Every node param needs EXACTLY ONE source: a literal in 'params' OR one "
+                "incoming edge, never both/neither. Validated at creation time (cycles, "
+                "unknown refs, unbound params reported by name)."
             ),
             "parameters": {
                 "type": "object",
@@ -557,12 +541,10 @@ META_TOOLS = [
         "function": {
             "name": "run_pipeline",
             "description": (
-                "Run a previously created pipeline by name, passing whatever inputs it "
-                "needs (these become the reserved 'input' node's fields, per how the "
-                "pipeline's edges reference them). Executes every node in dependency "
-                "order; if any node fails, the whole run stops immediately and reports "
-                "which node failed and why - nothing downstream of a failed node runs. "
-                "Returns the output of every terminal node (nodes nothing else consumes) "
+                "Run a previously created pipeline by name, passing the inputs its edges "
+                "reference via the 'input' pseudo-node. Executes nodes in dependency "
+                "order; if any node fails, the run stops immediately, reporting which "
+                "node and why - nothing downstream runs. Returns terminal-node outputs "
                 "plus a full per-node execution trace."
             ),
             "parameters": {
@@ -656,7 +638,38 @@ MUTATING_TOOL_NAMES = {
 }
 
 
-def build_tools_and_impls(plan_mode: bool = False):
+# Above this many saved skills, sending every skill's full schema on every
+# turn regardless of relevance starts costing real context space for no
+# benefit (most turns only need a handful) - switch to relevance filtering.
+SKILL_FILTER_THRESHOLD = 8
+SKILL_FILTER_TOP_K = 8
+SKILL_FILTER_MIN_SCORE = 0.15
+
+
+def _select_relevant_skills(query: str, always_include: set) -> list:
+    """Return the subset of list_skills() entries worth sending this turn:
+    the top-K most relevant to `query` by embedding similarity, plus any
+    names in `always_include` (e.g. a skill already in use this
+    conversation, so it doesn't disappear from under the model mid-task)."""
+    entries = sm.list_skills()
+    if len(entries) <= SKILL_FILTER_THRESHOLD:
+        return entries
+
+    from skull.storage.store import embed
+    import numpy as np
+
+    texts = [f"{e['name']}: {e['description']}" for e in entries]
+    doc_vectors = embed(texts)
+    query_vector = embed([query])[0]
+    scores = doc_vectors @ query_vector
+    top_idx = set(np.argsort(-scores)[:SKILL_FILTER_TOP_K].tolist())
+    forced_idx = {i for i, e in enumerate(entries) if e["name"] in always_include}
+
+    kept_idx = {i for i in top_idx if scores[i] >= SKILL_FILTER_MIN_SCORE} | forced_idx
+    return [entries[i] for i in sorted(kept_idx)]
+
+
+def build_tools_and_impls(plan_mode: bool = False, query: str = None, always_include_skills: set = None):
     """Assemble the full tool list (builtin + meta + saved skills) fresh each
     turn, so a skill created mid-conversation is immediately callable.
 
@@ -670,6 +683,14 @@ def build_tools_and_impls(plan_mode: bool = False):
     list_skills, recall_memory, read_file, list_directory,
     sandbox_read_file, sandbox_list_directory, list_pipelines) plus plain
     chat.
+
+    Once the number of saved skills exceeds SKILL_FILTER_THRESHOLD, only the
+    top-K skills most relevant to `query` (by embedding similarity against
+    each skill's name+description) get their full schema sent - the rest
+    stay reachable via list_skills/run via a future turn, keeping per-turn
+    token cost roughly constant instead of growing with every skill ever
+    created. Below the threshold, every skill is sent as before (filtering
+    a handful of skills has no benefit and costs an embedding call).
     """
     tools = list(BUILTIN_TOOLS) + list(META_TOOLS)
     impls = dict(BUILTIN_IMPLS)
@@ -680,7 +701,12 @@ def build_tools_and_impls(plan_mode: bool = False):
         impls = {k: v for k, v in impls.items() if k not in MUTATING_TOOL_NAMES}
         return tools, impls
 
-    for entry in sm.list_skills():
+    if query:
+        skill_entries = _select_relevant_skills(query, always_include_skills or set())
+    else:
+        skill_entries = sm.list_skills()
+
+    for entry in skill_entries:
         name = entry["name"]
         tools.append(
             {

@@ -386,6 +386,39 @@ def test_rollback_skill_is_itself_undoable(isolated_skills_dir):
     assert sm.get_skill("doubler")["description"] == "triples now"
 
 
+def test_rollback_skill_preserves_required_env(isolated_skills_dir, isolated_skills_env):
+    """Real bug found via code review: _archive_current_version's meta.json
+    only ever recorded description/parameters, never required_env, so
+    rolling back a credentialed skill silently and permanently wiped its
+    credential requirement - the model would lose the "call
+    request_skill_env first" signal and just see get_env() return None at
+    call time, with no explanation, and no later rollback could recover the
+    lost required_env since it was never archived in the first place."""
+    sm.create_skill(
+        "notify", "sends a notification using an API key", SIMPLE_PARAMS, SEND_CODE_USING_ENV,
+        required_env=["FAKE_API_KEY"],
+    )
+    sm.create_skill("notify", "sends a notification, v2", SIMPLE_PARAMS, SEND_CODE_USING_ENV)
+
+    result = sm.rollback_skill("notify")
+    assert result["status"] == "rolled_back"
+    assert sm.get_skill("notify")["required_env"] == ["FAKE_API_KEY"]
+
+
+def test_rollback_skill_preserves_required_env_across_multiple_rollbacks(isolated_skills_dir, isolated_skills_env):
+    sm.create_skill(
+        "notify", "v1", SIMPLE_PARAMS, SEND_CODE_USING_ENV, required_env=["FAKE_API_KEY"],
+    )
+    sm.create_skill("notify", "v2", SIMPLE_PARAMS, SEND_CODE_USING_ENV)
+    sm.create_skill("notify", "v3", SIMPLE_PARAMS, SEND_CODE_USING_ENV)
+
+    sm.rollback_skill("notify")  # -> v2 (never had required_env)
+    assert sm.get_skill("notify")["required_env"] == []
+
+    sm.rollback_skill("notify", version=1)  # -> v1
+    assert sm.get_skill("notify")["required_env"] == ["FAKE_API_KEY"]
+
+
 def test_rollback_skill_missing_skill_returns_error(isolated_skills_dir):
     result = sm.rollback_skill("nonexistent")
     assert "error" in result

@@ -87,7 +87,14 @@ def _archive_current_version(name: str, entry: dict) -> None:
     if skill_md.exists():
         shutil.copy2(skill_md, version_dir / "SKILL.md")
     (version_dir / "meta.json").write_text(
-        json.dumps({"description": entry["description"], "parameters": entry.get("parameters") or {}}, indent=2)
+        json.dumps(
+            {
+                "description": entry["description"],
+                "parameters": entry.get("parameters") or {},
+                "required_env": entry.get("required_env") or [],
+            },
+            indent=2,
+        )
         + "\n"
     )
 
@@ -148,6 +155,7 @@ def rollback_skill(name: str, version: int = None) -> dict:
         meta.get("description", entry["description"]),
         meta.get("parameters", entry.get("parameters") or {}),
         code,
+        meta.get("required_env", entry.get("required_env") or []),
     )
     if "error" in result:
         return result

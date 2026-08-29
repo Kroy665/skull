@@ -10,7 +10,10 @@ mode.
 - Search the web and scrape pages (`web_search`, `scrape_page`)
 - Run throwaway Python in an isolated E2B cloud sandbox (`run_python`),
   including reading/writing files there (`sandbox_read_file`,
-  `sandbox_write_file`, `sandbox_list_directory`)
+  `sandbox_write_file`, `sandbox_list_directory`) and pulling a generated
+  file (a `.docx`, image, zip, etc.) straight onto your machine as raw bytes
+  (`download_from_sandbox`, requires your y/n approval) — no base64-through-
+  the-conversation detour that would otherwise burn a huge chunk of context
 - Read files on your own machine freely (`read_file`, `list_directory`); writing
   (`write_file`) and running shell commands (`run_command`) require your
   explicit y/n approval every time, since those touch your real filesystem

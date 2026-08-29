@@ -192,7 +192,7 @@ BUILTIN_TOOLS = [
                     "path": {"type": "string", "description": "Path to the file (~ is expanded)"},
                     "max_chars": {
                         "type": "integer",
-                        "description": "Max characters to return (default 20000, max 200000)",
+                        "description": "Max characters to return (default 20000, max 40000)",
                     },
                 },
                 "required": ["path"],
@@ -246,9 +246,13 @@ BUILTIN_TOOLS = [
         "function": {
             "name": "sandbox_read_file",
             "description": (
-                "Read a file from the isolated E2B sandbox filesystem (not the user's "
-                "machine - see read_file for that). No approval needed, same trust level "
-                "as run_python."
+                "Read a TEXT file from the isolated E2B sandbox filesystem (not the "
+                "user's machine - see read_file for that) - for content you want to "
+                "inspect, not deliver. For binary output (.docx/.pdf/.png/.zip, etc.) "
+                "or anything meant to end up on the user's machine, use "
+                "download_from_sandbox instead - do not base64-encode a binary file "
+                "and read it through here, it wastes enormous context for no benefit. "
+                "No approval needed, same trust level as run_python."
             ),
             "parameters": {
                 "type": "object",
@@ -256,7 +260,7 @@ BUILTIN_TOOLS = [
                     "path": {"type": "string", "description": "Path to the file inside the sandbox"},
                     "max_chars": {
                         "type": "integer",
-                        "description": "Max characters to return (default 20000, max 200000)",
+                        "description": "Max characters to return (default 20000, max 40000)",
                     },
                 },
                 "required": ["path"],
@@ -298,6 +302,33 @@ BUILTIN_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "download_from_sandbox",
+            "description": (
+                "Copy a file directly from the sandbox to the user's own machine, as raw "
+                "bytes - use this for ANY binary output (a generated .docx/.pdf/.png/.zip, "
+                "etc.), never sandbox_read_file for that. sandbox_read_file is for reading "
+                "text you want to see; this is for delivering a file to the user, and "
+                "avoids burning huge amounts of context on a base64/text encoding of "
+                "binary data the model doesn't need to read anyway. Requires the user's "
+                "explicit y/n approval, same as write_file."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sandbox_path": {"type": "string", "description": "Path to the file inside the sandbox"},
+                    "local_path": {"type": "string", "description": "Destination path on the user's machine (~ is expanded)"},
+                    "reason": {
+                        "type": "string",
+                        "description": "One short sentence explaining why, shown in the approval prompt",
+                    },
+                },
+                "required": ["sandbox_path", "local_path"],
+            },
+        },
+    },
 ]
 
 BUILTIN_IMPLS = {
@@ -330,12 +361,15 @@ BUILTIN_IMPLS = {
         args.get("path", ""), args.get("content", "")
     ),
     "sandbox_list_directory": lambda args: scratch.sandbox_list_directory(args.get("path", "/")),
+    "download_from_sandbox": lambda args: scratch.download_from_sandbox(
+        args.get("sandbox_path", ""), args.get("local_path", ""), args.get("reason", "")
+    ),
 }
 
 # Tools that require blocking interactive stdin (a permission prompt) - the
 # spinner must be stopped before these run so the prompt doesn't collide
 # with spinner output on the same terminal line.
-INTERACTIVE_TOOL_NAMES = {"run_command", "write_file"}
+INTERACTIVE_TOOL_NAMES = {"run_command", "write_file", "download_from_sandbox"}
 
 # ---------------------------------------------------------------------------
 # Self-extension meta-tools: let the model write and register a brand new
@@ -628,6 +662,7 @@ MUTATING_TOOL_NAMES = {
     "stop_background_command",
     "write_file",
     "sandbox_write_file",
+    "download_from_sandbox",
     "create_pipeline",
     "delete_pipeline",
     # run_pipeline's own effects are opaque (a node can be any skill, whose

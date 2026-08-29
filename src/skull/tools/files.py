@@ -13,6 +13,14 @@ from pathlib import Path
 from skull.tools.permission import ask_permission
 
 MAX_READ_CHARS = 20000
+# Hard ceiling regardless of what max_chars the caller (model) requests. This
+# exists because a single oversized tool result can blow the context window
+# in one shot - the compaction system only manages accumulation of history
+# over multiple turns, it can't shrink a result that's already been read and
+# is about to be sent in the very next request. ~40000 chars is ~11,400
+# tokens - large enough for a real file, small enough that no single call
+# can approach the 32K window on its own.
+MAX_READ_CHARS_CEILING = 40000
 MAX_WRITE_PREVIEW_CHARS = 300
 
 
@@ -23,7 +31,7 @@ def _resolve(path: str) -> Path:
 def read_file(path: str, max_chars: int = MAX_READ_CHARS) -> dict:
     if not path or not path.strip():
         return {"error": "no path provided"}
-    max_chars = max(200, min(int(max_chars), 200000))
+    max_chars = max(200, min(int(max_chars), MAX_READ_CHARS_CEILING))
 
     p = _resolve(path)
     if not p.exists():

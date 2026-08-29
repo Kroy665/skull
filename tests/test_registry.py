@@ -21,6 +21,16 @@ def test_normal_mode_includes_mutating_tools(isolated_skills_dir):
     assert "create_skill" in impls
 
 
+def test_download_from_sandbox_is_interactive_and_mutating():
+    """download_from_sandbox writes to the real local filesystem, so it must
+    require interactive approval (like write_file) and be withheld in plan
+    mode (like every other mutating tool) - this is the tool added so binary
+    sandbox output no longer needs to be smuggled through sandbox_read_file
+    as base64 text."""
+    assert "download_from_sandbox" in registry.INTERACTIVE_TOOL_NAMES
+    assert "download_from_sandbox" in registry.MUTATING_TOOL_NAMES
+
+
 def test_plan_mode_excludes_all_mutating_tools(isolated_skills_dir):
     tools, impls = registry.build_tools_and_impls(plan_mode=True)
     names = {t["function"]["name"] for t in tools}

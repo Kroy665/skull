@@ -44,8 +44,11 @@ mode.
 - macOS or Linux (raw-terminal input handling is POSIX-only; on Windows it
   falls back to plain input with no ghost text/inline history, but should
   still run)
+- Python 3.12+ (needed for `sqlite3`'s extension-loading support, which
+  `sqlite-vec` requires — some pyenv/system Python 3.10 builds lack this)
 - [uv](https://docs.astral.sh/uv/) — Python package/project manager
-  (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
+  (`curl -LsSf https://astral.sh/uv/install.sh | sh`); `uv sync` will fetch
+  a matching Python automatically if you don't have one
 - A Qwen-compatible chat-completions API endpoint and key
 - Optional: an [E2B](https://e2b.dev) API key, to enable the `run_python`
   sandbox tool
@@ -108,7 +111,7 @@ src/skull/
         files.py                 local read_file/write_file/list_directory
         permission.py            shared interactive y/n approval prompt
     storage/
-        store.py                 local vector store (persona facts + conversation history)
+        store.py                 local vector store (persona facts + conversation history), backed by SQLite + sqlite-vec
     ui/
         spinner.py               per-action loading animations
         ghost_input.py            raw-terminal input with ghost text + history

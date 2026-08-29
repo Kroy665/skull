@@ -84,14 +84,27 @@ def test_delete_missing_entry_returns_error(isolated_memory_dir):
     assert store.count() == 1
 
 
-def test_delete_last_entry_clears_vectors(isolated_memory_dir):
+def test_delete_last_entry_leaves_store_searchable(isolated_memory_dir):
     store = mem.get_store("persona")
     store.add("only entry")
     store.delete("only entry")
     assert store.count() == 0
-    assert store._vectors is None
-    # Searching an emptied store must not crash on a None vectors matrix.
+    # Searching an emptied store must not crash (no rows left in either table).
     assert store.search("anything") == []
+
+
+def test_delete_removes_matching_vec_row_not_just_entries_row(isolated_memory_dir):
+    """A prior bug shape: deleting only from `entries` while leaving the
+    vec_items row behind would silently corrupt future searches (a
+    still-indexed vector for text that no longer exists). Deleting a middle
+    entry and re-adding must not resurrect the deleted vector in search."""
+    store = mem.get_store("persona")
+    store.add("keep me")
+    store.add("delete me")
+    store.delete("delete me")
+
+    results = store.search("delete me", k=5)
+    assert all(r["text"] != "delete me" for r in results)
 
 
 def test_store_reloads_from_disk_across_instances(isolated_memory_dir):
@@ -106,19 +119,19 @@ def test_store_reloads_from_disk_across_instances(isolated_memory_dir):
     assert store2.all() == [{"text": "persisted fact", "metadata": {}}]
 
 
-def test_store_rebuilds_vectors_when_npy_missing(isolated_memory_dir):
-    """If the .jsonl exists but the .npy cache is missing/stale, vectors
-    must be recomputed from the text rather than left as None."""
+def test_store_persists_vectors_searchable_across_instances(isolated_memory_dir):
+    """A fresh VectorStore pointed at the same db file must be able to
+    search previously stored entries, not just list them - i.e. the
+    embeddings themselves (not just the text) survive a reopen."""
     store1 = mem.get_store("persona")
     store1.add("fact one")
     store1.add("fact two")
 
-    store1.npy_path.unlink()
-
     store2 = mem.VectorStore("persona")
     assert store2.count() == 2
-    assert store2._vectors is not None
-    assert store2._vectors.shape[0] == 2
+    results = store2.search("fact one", k=5)
+    assert results[0]["text"] == "fact one"
+    assert results[0]["score"] > 0.99
 
 
 def test_conversations_and_persona_are_separate_stores(isolated_memory_dir):

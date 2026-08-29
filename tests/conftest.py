@@ -61,12 +61,14 @@ def isolated_memory_dir(tmp_path, monkeypatch):
     def fake_embed(texts):
         # Deterministic, cheap "embedding": each text maps to a fixed-size
         # vector derived from its hash, normalized. Good enough to test
-        # storage/search plumbing without a real model.
+        # storage/search plumbing without a real model. Dimension must match
+        # mem.EMBED_DIM - the vec0 virtual table's column width is fixed at
+        # table-creation time.
         vectors = []
         for t in texts:
             h = abs(hash(t))
             rng = np.random.default_rng(h % (2**32))
-            v = rng.normal(size=16).astype(np.float32)
+            v = rng.normal(size=mem.EMBED_DIM).astype(np.float32)
             v /= np.linalg.norm(v)
             vectors.append(v)
         return np.array(vectors, dtype=np.float32)

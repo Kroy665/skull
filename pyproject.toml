@@ -3,7 +3,7 @@ name = "skull"
 version = "0.1.0"
 description = "Terminal chat client for a Qwen endpoint with tool calling, self-created skills, and long-term memory."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "requests",
     "python-dotenv",
@@ -11,6 +11,7 @@ dependencies = [
     "sentence-transformers",
     "numpy",
     "e2b-code-interpreter",
+    "sqlite-vec>=0.1.9",
 ]
 
 [dependency-groups]

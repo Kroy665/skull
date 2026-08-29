@@ -5,26 +5,36 @@ this works fully offline with no dependency on the Qwen endpoint (which does
 not expose an embeddings API).
 
 Storage layout (memory/, at the project root - see skull.config.MEMORY_DIR):
-    conversations.jsonl / conversations.npy  - every auto-logged chat turn
-    persona.jsonl        / persona.npy       - curated facts about the user
-                                                (identity, preferences, behavior)
+    conversations.db  - every auto-logged chat turn
+    persona.db        - curated facts about the user (identity, preferences,
+                         behavior)
 
-Each store is a flat numpy matrix of normalized embeddings + a parallel
-JSONL file of {text, metadata}. Cosine similarity via dot product since
-vectors are unit-normalized. This is intentionally simple - fine for up to
-tens of thousands of entries, which is far more than a personal assistant's
-history will hit.
+Each store is a single SQLite database with two tables: `entries` (id, text,
+metadata, created_at) and a sqlite-vec vec0 virtual table `vec_items` keyed
+by the same id, holding the L2-normalized embedding. Cosine similarity is
+just the dot product since vectors are unit-normalized - sqlite-vec's `MATCH
+... ORDER BY distance` does this natively via its L2/cosine ops.
+
+This replaced an earlier jsonl+.npy design: that scheme rewrote the entire
+jsonl file on every single delete() call (O(n) per delete, and a partial
+write mid-rewrite could corrupt the whole file), and had no way to query
+without loading everything into memory. SQLite gives real per-row deletes,
+crash-safe transactions, and a path to filtering by metadata/time later
+without another storage migration.
 """
 
 import json
 import os
+import sqlite3
 import threading
 
 import numpy as np
+import sqlite_vec
 
 from skull.config import MEMORY_DIR
 
 EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
+EMBED_DIM = 384  # all-MiniLM-L6-v2's fixed output size - the vec0 table needs this at creation time
 
 _model = None
 _model_lock = threading.Lock()
@@ -51,99 +61,103 @@ def embed(texts: list) -> np.ndarray:
     return np.asarray(vectors, dtype=np.float32)
 
 
+def _connect(db_path) -> sqlite3.Connection:
+    db = sqlite3.connect(db_path)
+    db.enable_load_extension(True)
+    sqlite_vec.load(db)
+    db.enable_load_extension(False)
+    db.execute("pragma journal_mode=WAL")
+    db.execute(
+        "create table if not exists entries ("
+        "id integer primary key autoincrement, "
+        "text text not null, "
+        "metadata text not null, "
+        "created_at text not null default (datetime('now'))"
+        ")"
+    )
+    db.execute(
+        f"create virtual table if not exists vec_items using vec0(embedding float[{EMBED_DIM}])"
+    )
+    db.commit()
+    return db
+
+
 class VectorStore:
     def __init__(self, name: str):
         self.name = name
-        self.jsonl_path = MEMORY_DIR / f"{name}.jsonl"
-        self.npy_path = MEMORY_DIR / f"{name}.npy"
-        self._entries = []       # list of {"text": str, "metadata": dict}
-        self._vectors = None     # np.ndarray, shape (n, dim), or None if empty
-        self._load()
-
-    def _load(self):
         MEMORY_DIR.mkdir(exist_ok=True)
-        if self.jsonl_path.exists():
-            with self.jsonl_path.open() as f:
-                self._entries = [json.loads(line) for line in f if line.strip()]
-        if self.npy_path.exists() and self._entries:
-            self._vectors = np.load(self.npy_path)
-        elif self._entries:
-            # jsonl exists but npy missing/stale - rebuild
-            self._vectors = embed([e["text"] for e in self._entries])
-            self._save_vectors()
-
-    def _save_vectors(self):
-        if self._vectors is not None:
-            np.save(self.npy_path, self._vectors)
-        else:
-            self.npy_path.unlink(missing_ok=True)
-
-    def _append_jsonl(self, entry: dict):
-        with self.jsonl_path.open("a") as f:
-            f.write(json.dumps(entry) + "\n")
+        self.db_path = MEMORY_DIR / f"{name}.db"
+        self._db = _connect(self.db_path)
 
     def add(self, text: str, metadata: dict | None = None) -> dict:
         if not text or not text.strip():
             return {"error": "empty text, nothing stored"}
 
-        entry = {"text": text, "metadata": metadata or {}}
-        vector = embed([text])  # shape (1, dim)
+        vector = embed([text])[0]  # shape (dim,)
+        with self._db:
+            cur = self._db.execute(
+                "insert into entries (text, metadata) values (?, ?)",
+                (text, json.dumps(metadata or {})),
+            )
+            entry_id = cur.lastrowid
+            self._db.execute(
+                "insert into vec_items (rowid, embedding) values (?, ?)",
+                (entry_id, vector.tobytes()),
+            )
 
-        self._entries.append(entry)
-        if self._vectors is None:
-            self._vectors = vector
-        else:
-            self._vectors = np.vstack([self._vectors, vector])
-
-        self._append_jsonl(entry)
-        self._save_vectors()
-        return {"status": "stored", "count": len(self._entries)}
+        count = self._db.execute("select count(*) from entries").fetchone()[0]
+        return {"status": "stored", "count": count}
 
     def search(self, query: str, k: int = 5, min_score: float = 0.0) -> list:
-        if not self._entries or self._vectors is None:
+        count = self._db.execute("select count(*) from entries").fetchone()[0]
+        if count == 0:
             return []
-        query_vec = embed([query])[0]  # shape (dim,)
-        scores = self._vectors @ query_vec  # cosine similarity (both normalized)
-        top_idx = np.argsort(-scores)[:k]
+
+        query_vector = embed([query])[0]
+        # sqlite-vec's `distance` for vec0 is squared L2. Vectors are unit
+        # -normalized, so cosine similarity = 1 - (squared_L2 / 2) exactly.
+        rows = self._db.execute(
+            """
+            select entries.text, entries.metadata, vec_items.distance
+            from vec_items
+            join entries on entries.id = vec_items.rowid
+            where vec_items.embedding match ? and k = ?
+            order by vec_items.distance
+            """,
+            (query_vector.tobytes(), min(k, count)),
+        ).fetchall()
+
         results = []
-        for i in top_idx:
-            score = float(scores[i])
+        for text, metadata_json, distance in rows:
+            score = 1.0 - (distance / 2.0)
             if score < min_score:
                 continue
-            entry = self._entries[i]
-            results.append({"text": entry["text"], "metadata": entry["metadata"], "score": score})
+            results.append({"text": text, "metadata": json.loads(metadata_json), "score": score})
         return results
 
     def count(self) -> int:
-        return len(self._entries)
+        return self._db.execute("select count(*) from entries").fetchone()[0]
 
     def all(self) -> list:
-        return list(self._entries)
+        rows = self._db.execute("select text, metadata from entries order by id").fetchall()
+        return [{"text": text, "metadata": json.loads(metadata_json)} for text, metadata_json in rows]
 
     def delete(self, text: str) -> dict:
         """Remove the entry whose text exactly matches `text`. Exact match
         (rather than an index) so callers can reference a fact by quoting it
         back, e.g. after finding it via search() - positions aren't stable
         identifiers once other entries are added or removed."""
-        idx = next((i for i, e in enumerate(self._entries) if e["text"] == text), None)
-        if idx is None:
+        row = self._db.execute("select id from entries where text = ? limit 1", (text,)).fetchone()
+        if row is None:
             return {"error": "no matching entry found", "deleted": False}
 
-        del self._entries[idx]
-        if self._vectors is not None:
-            self._vectors = np.delete(self._vectors, idx, axis=0)
-            if len(self._vectors) == 0:
-                self._vectors = None
+        entry_id = row[0]
+        with self._db:
+            self._db.execute("delete from entries where id = ?", (entry_id,))
+            self._db.execute("delete from vec_items where rowid = ?", (entry_id,))
 
-        # Rewrite the whole jsonl - simplest way to keep it in sync with an
-        # in-place list deletion, and these stores are small (see module
-        # docstring: fine up to tens of thousands of entries).
-        with self.jsonl_path.open("w") as f:
-            for entry in self._entries:
-                f.write(json.dumps(entry) + "\n")
-        self._save_vectors()
-
-        return {"status": "deleted", "deleted": True, "remaining": len(self._entries)}
+        remaining = self._db.execute("select count(*) from entries").fetchone()[0]
+        return {"status": "deleted", "deleted": True, "remaining": remaining}
 
 
 _stores = {}

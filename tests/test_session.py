@@ -8,6 +8,7 @@ focus purely on handle_turn's own exception handling and message-rollback
 behavior, independent of client.py's parsing logic (covered in
 test_client.py)."""
 
+import pytest
 import requests
 
 from skull.core import session as session_module
@@ -222,3 +223,47 @@ def test_handle_turn_reranks_skills_using_accumulated_turn_context(
     # Second round-trip's tool list must include the skill discovered only
     # via the first round-trip's tool result content.
     assert "send_alert_email" in call_log[1]
+
+
+# ---------------------------------------------------------------------------
+# run() - the module-level REPL entry point's required-config checks. Real
+# requirement: QWEN_URL has no built-in default endpoint (removed along with
+# every other reference to the original hardcoded self-hosted domain), so it
+# must be checked and reported just as clearly as the pre-existing QWEN_KEY
+# check, not left to fail later with a confusing malformed-URL request error.
+# ---------------------------------------------------------------------------
+
+def test_run_exits_with_clear_error_when_qwen_url_not_set(monkeypatch, capsys):
+    monkeypatch.setattr(session_module, "QWEN_URL", "")
+    monkeypatch.setattr(session_module, "QWEN_KEY", "some-key")
+
+    with pytest.raises(SystemExit):
+        session_module.run()
+
+    err = capsys.readouterr().err
+    assert "QWEN_URL" in err
+
+
+def test_run_exits_with_clear_error_when_qwen_key_not_set(monkeypatch, capsys):
+    monkeypatch.setattr(session_module, "QWEN_URL", "https://example.com")
+    monkeypatch.setattr(session_module, "QWEN_KEY", "")
+
+    with pytest.raises(SystemExit):
+        session_module.run()
+
+    err = capsys.readouterr().err
+    assert "QWEN_KEY" in err
+
+
+def test_run_checks_qwen_url_before_qwen_key(monkeypatch, capsys):
+    """Both missing at once should report the QWEN_URL error first - it's
+    checked first in run(), and a user missing both should see the more
+    fundamental problem (no endpoint at all) rather than the key error."""
+    monkeypatch.setattr(session_module, "QWEN_URL", "")
+    monkeypatch.setattr(session_module, "QWEN_KEY", "")
+
+    with pytest.raises(SystemExit):
+        session_module.run()
+
+    err = capsys.readouterr().err
+    assert "QWEN_URL" in err

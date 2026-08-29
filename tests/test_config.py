@@ -109,3 +109,16 @@ def test_load_system_prompt_falls_back_when_bundled_default_missing(tmp_path, mo
 
     prompt = config.load_system_prompt()
     assert "helpful terminal assistant" in prompt
+
+
+def test_qwen_url_has_no_hardcoded_default(tmp_path, monkeypatch):
+    """QWEN_URL must not fall back to any built-in default endpoint - every
+    user points this at their own Qwen-compatible endpoint explicitly."""
+    monkeypatch.delenv("QWEN_URL", raising=False)
+    config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path))
+    assert config.QWEN_URL == ""
+
+
+def test_qwen_url_reads_from_env_when_set(tmp_path, monkeypatch):
+    config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path), QWEN_URL="https://my-endpoint.example.com/")
+    assert config.QWEN_URL == "https://my-endpoint.example.com"  # trailing slash stripped

@@ -283,6 +283,14 @@ def _print_banner(session: Session):
 
 
 def run():
+    if not QWEN_URL:
+        print(
+            f"Error: QWEN_URL is not set. Add it to {CONFIG_DIR / '.env'} "
+            "(e.g. QWEN_URL=https://your-qwen-endpoint), or set it as a real environment variable. "
+            "This must point at your own Qwen-compatible chat-completions endpoint.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     if not QWEN_KEY:
         print(
             f"Error: QWEN_KEY is not set. Add it to {CONFIG_DIR / '.env'} "

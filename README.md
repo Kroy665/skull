@@ -316,8 +316,8 @@ Qwen credentials:
 ```bash
 mkdir -p ~/.config/skull   # adjust for your platform, see table above
 cat > ~/.config/skull/.env <<'EOF'
+QWEN_URL=https://your-qwen-endpoint
 QWEN_KEY=your-key-here
-# QWEN_URL=https://your-endpoint
 # QWEN_MODEL=your-model-name
 # E2B_API_KEY=your-e2b-key   # optional, enables run_python
 EOF
@@ -433,8 +433,8 @@ caught the bugs above, not the mocked suite.
 
 | Variable      | Required | Default                            | Purpose                                    |
 |---------------|----------|-------------------------------------|---------------------------------------------|
+| `QWEN_URL`    | Yes      | —                                    | Your Qwen-compatible chat-completions endpoint |
 | `QWEN_KEY`    | Yes      | —                                    | Bearer token for your chat-completions endpoint |
-| `QWEN_URL`    | No       | `https://qwen.your-endpoint.example`     | API base URL                                 |
 | `QWEN_MODEL`  | No       | `qwen3.8-27b`                        | Model name                                   |
 | `E2B_API_KEY` | No       | —                                    | Enables `run_python` and sandbox file tools  |
 

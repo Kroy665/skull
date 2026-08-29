@@ -10,8 +10,8 @@ Usage:
 
 Env vars (also settable in ~/.config/skull/.env once installed for real -
 see skull.config.CONFIG_DIR):
+    QWEN_URL     - your Qwen-compatible chat-completions endpoint (required)
     QWEN_KEY     - bearer token (required)
-    QWEN_URL     - base URL, defaults to https://qwen.your-endpoint.example
     QWEN_MODEL   - model name, defaults to qwen3.8-27b
     E2B_API_KEY  - enables the run_python sandbox tool (optional)
 """

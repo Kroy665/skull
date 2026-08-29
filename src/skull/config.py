@@ -64,7 +64,7 @@ PIPELINES_DIR = CONFIG_DIR / "pipelines"
 # terminal prompt (see tools/skill_env.py).
 SKILLS_ENV_PATH = CONFIG_DIR / "skills.env"
 
-QWEN_URL = os.environ.get("QWEN_URL", "https://qwen.your-endpoint.example").rstrip("/")
+QWEN_URL = (os.environ.get("QWEN_URL") or "").rstrip("/")
 QWEN_MODEL = os.environ.get("QWEN_MODEL", "qwen3.8-27b")
 QWEN_KEY = os.environ.get("QWEN_KEY")
 

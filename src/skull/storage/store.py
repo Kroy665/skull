@@ -67,6 +67,24 @@ def _get_model():
     return _model
 
 
+def warm_up():
+    """Force the embedding model to load now, synchronously, rather than
+    lazily on first real use.
+
+    Real UX bug this fixes: on a genuinely fresh install, the FIRST call
+    that actually reaches embed() isn't the pre-reply memory lookup
+    (build_memory_context's search() short-circuits before ever calling
+    embed() when a store is empty - see VectorStore.search) - it's the
+    post-reply mem.conversations().add() call, which always embeds. That
+    made the one-time model download/load progress bar print AFTER the
+    assistant's first reply, interleaved with the next prompt, looking
+    like something broke or reloaded unexpectedly rather than a normal
+    one-time startup cost. Called once at session startup (see
+    core/session.py's run()) so this happens up front, with a clear
+    message, before the user ever sees a prompt."""
+    _get_model()
+
+
 def embed(texts: list) -> np.ndarray:
     """Return L2-normalized embeddings, shape (len(texts), dim)."""
     model = _get_model()

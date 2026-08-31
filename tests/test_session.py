@@ -337,6 +337,11 @@ def test_run_offers_setup_wizard_when_both_unset_and_uses_its_result(monkeypatch
         "run_first_time_setup",
         lambda: {"LLM_URL": "https://from-wizard.example.com", "LLM_KEY": "wizard-key", "LLM_MODEL": "wizard-model"},
     )
+    # run() proceeds far enough to warm up the real embedding model
+    # (mem.warm_up()) before reaching Session() - mock it so this test
+    # never actually downloads/loads a real model or depends on network
+    # availability.
+    monkeypatch.setattr(session_module.mem, "warm_up", lambda: None)
 
     # Setup succeeded, so run() should proceed past both checks into the
     # normal startup path - stop it right after by making Session() itself
@@ -349,6 +354,54 @@ def test_run_offers_setup_wizard_when_both_unset_and_uses_its_result(monkeypatch
     assert session_module.LLM_URL == "https://from-wizard.example.com"
     assert session_module.LLM_KEY == "wizard-key"
     assert session_module.LLM_MODEL == "wizard-model"
+
+
+# ---------------------------------------------------------------------------
+# Embedding model warm-up - real UX bug this fixes: on a fresh install
+# (empty memory stores), the first call that actually reached embed() used
+# to be the post-reply mem.conversations().add() (the pre-reply memory
+# lookup short-circuits before embedding anything when a store is empty),
+# so the one-time model download/load progress bar printed AFTER the
+# assistant's first reply, interleaved with the next prompt - looking like
+# something broke rather than a normal one-time startup cost. run() now
+# warms it up explicitly, with its own message, before the first prompt.
+# ---------------------------------------------------------------------------
+
+def test_run_warms_up_the_embedding_model_before_the_first_prompt(monkeypatch, capsys):
+    monkeypatch.setattr(session_module, "LLM_URL", "https://example.com")
+    monkeypatch.setattr(session_module, "LLM_KEY", "a-key")
+    monkeypatch.setattr(session_module, "LLM_MODEL", "a-model")
+
+    warm_up_called = []
+    monkeypatch.setattr(session_module.mem, "warm_up", lambda: warm_up_called.append(True))
+    # Stop run() right after warm_up() so this test doesn't need to run
+    # the full REPL loop.
+    monkeypatch.setattr(session_module, "Session", lambda: (_ for _ in ()).throw(RuntimeError("reached Session()")))
+
+    with pytest.raises(RuntimeError, match="reached Session"):
+        session_module.run()
+
+    assert warm_up_called == [True]
+
+
+def test_run_survives_embedding_model_warm_up_failure(monkeypatch, capsys):
+    """Best-effort: a failure loading the embedding model (no network,
+    disk full) must not block startup entirely - the same warm-up is
+    just best-effort, and embed() gets its own chance (and its own error
+    handling - see core/session.py's handle_turn) later if memory is
+    actually used."""
+    monkeypatch.setattr(session_module, "LLM_URL", "https://example.com")
+    monkeypatch.setattr(session_module, "LLM_KEY", "a-key")
+    monkeypatch.setattr(session_module, "LLM_MODEL", "a-model")
+
+    def raise_error():
+        raise OSError("couldn't connect to huggingface.co")
+
+    monkeypatch.setattr(session_module.mem, "warm_up", raise_error)
+    monkeypatch.setattr(session_module, "Session", lambda: (_ for _ in ()).throw(RuntimeError("reached Session()")))
+
+    with pytest.raises(RuntimeError, match="reached Session"):
+        session_module.run()  # must reach Session() despite warm_up() raising
 
 
 def test_run_does_not_offer_wizard_when_only_one_is_missing(monkeypatch, capsys):

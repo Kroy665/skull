@@ -361,6 +361,24 @@ def run():
 
     scratch.clear_scratch()
 
+    # Load the local embedding model now, up front, with a clear message -
+    # not lazily on first real use. Real UX bug this fixes: on a fresh
+    # install (empty memory stores), the first call that actually reached
+    # embed() used to be the post-reply mem.conversations().add() (the
+    # pre-reply memory lookup short-circuits before embedding anything
+    # when a store is empty), so the one-time model download/load
+    # progress bar printed AFTER the assistant's first reply, interleaved
+    # with the next prompt - looking like something broke rather than a
+    # normal one-time startup cost. Best-effort: a failure here (no
+    # network, disk full) must not block startup - the same call still
+    # gets attempted (and its own error handling still applies) lazily
+    # later if memory is actually used.
+    try:
+        tprint(f"{DIM}Loading local embedding model (one-time)...{RESET}")
+        mem.warm_up()
+    except Exception as e:
+        tprint(f"{YELLOW}Couldn't load the local embedding model: {e}{RESET}")
+
     session = Session()
     _print_banner(session)
     session.suggestions.refresh(last_session_context())

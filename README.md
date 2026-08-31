@@ -306,8 +306,8 @@ automatically:
 
 **Install** with one command — installs [uv](https://docs.astral.sh/uv/)
 first if you don't already have it, then `skull` itself from the latest
-[tagged release](https://github.com/Kroy665/skull/releases) (a plain
-source archive, not a git clone — no `git` needed on your machine):
+[tagged release](https://github.com/Kroy665/skull/releases) (requires
+`git` to be installed — see note below):
 
 ```bash
 curl -LsSf https://raw.githubusercontent.com/Kroy665/skull/refs/heads/main/install.sh | sh
@@ -317,18 +317,25 @@ curl -LsSf https://raw.githubusercontent.com/Kroy665/skull/refs/heads/main/insta
 <summary>Or install manually (via uv, or any pip/pipx)</summary>
 
 ```bash
-uv tool install "skull @ https://github.com/Kroy665/skull/archive/refs/tags/v0.1.0.tar.gz"
-# or: pipx install "skull @ https://github.com/Kroy665/skull/archive/refs/tags/v0.1.0.tar.gz"
-# or: pip install "skull @ https://github.com/Kroy665/skull/archive/refs/tags/v0.1.0.tar.gz"
+uv tool install "skull @ git+https://github.com/Kroy665/skull@v0.1.1"
+# or: pipx install "skull @ git+https://github.com/Kroy665/skull@v0.1.1"
+# or: pip install "skull @ git+https://github.com/Kroy665/skull@v0.1.1"
 ```
 
-Swap `v0.1.0` for whatever's [latest](https://github.com/Kroy665/skull/releases/latest).
+Swap `v0.1.1` for whatever's [latest](https://github.com/Kroy665/skull/releases/latest).
 
 </details>
 
 > [!NOTE]
+> Installing from a plain source-archive URL (rather than a `git+...`
+> ref) would silently ignore this repo's own pinned CPU-only PyTorch
+> index on Linux and pull several GB of unneeded CUDA packages instead —
+> [uv only reads a package's own index config from a source tree, not a
+> built tarball](https://github.com/astral-sh/uv/issues/19480) — hence
+> the `git+` form above.
+>
 > Not published to PyPI yet — once it is, `uv tool install skull` (no
-> archive URL needed) will work too.
+> `git+...` URL needed) will work too.
 
 **Configure** — create `.env` in your config directory above with your
 Qwen credentials:

@@ -6,10 +6,17 @@
 #
 #   curl -LsSf https://raw.githubusercontent.com/Kroy665/skull/refs/heads/main/install.sh | sh
 #
-# Installs from the latest tagged GitHub Release's source archive (not a
-# git clone - uv/pip can build a package directly from a plain tarball URL,
-# so no git history, .git directory, or git binary is needed on the
-# target machine at all).
+# Installs from the latest tagged GitHub Release, via `uv tool install
+# git+...@<tag>` rather than a plain tarball URL - a tarball/built-
+# distribution install would silently ignore pyproject.toml's own
+# [tool.uv.sources] (uv only reads a package's own source/index config
+# when installing from a source tree - a git ref or local path - not from
+# a built .tar.gz; see https://github.com/astral-sh/uv/issues/19480),
+# which is what pins torch to a CPU-only build on Linux instead of
+# pulling several GB of CUDA packages nobody here needs. This does mean
+# `git` itself needs to be present on the machine (not a manual clone -
+# uv fetches it), which every mainstream OS either ships with or makes a
+# one-line install.
 #
 # macOS/Linux only (see README.md's Requirements table - raw-terminal input
 # in skull itself is POSIX-only, which this script does not change).
@@ -20,6 +27,12 @@ REPO="Kroy665/skull"
 
 info() { printf '\033[1minstall.sh:\033[0m %s\n' "$1"; }
 err() { printf '\033[1;31minstall.sh:\033[0m %s\n' "$1" >&2; }
+
+if ! command -v git >/dev/null 2>&1; then
+    err "git is required but not found on this machine."
+    err "Install it (e.g. 'apt install git', 'brew install git', or via Xcode Command Line Tools on macOS), then re-run this script."
+    exit 1
+fi
 
 if ! command -v uv >/dev/null 2>&1; then
     info "uv not found - installing it first"
@@ -47,16 +60,8 @@ if [ -z "$LATEST_TAG" ]; then
     exit 1
 fi
 
-# github.com's own archive endpoint (not api.github.com, so this isn't
-# subject to the API's anonymous rate limit) redirects to codeload - no
-# git required either way. The URL must literally END in a recognized
-# archive extension for uv/pip to accept it as a direct dependency
-# reference, which rules out codeload's own URL shape
-# (.../tar.gz/refs/tags/<tag>, extension not at the end).
-TARBALL_URL="https://github.com/$REPO/archive/refs/tags/$LATEST_TAG.tar.gz"
-
 info "installing skull $LATEST_TAG"
-uv tool install --force "skull @ $TARBALL_URL"
+uv tool install --force "skull @ git+https://github.com/$REPO@$LATEST_TAG"
 
 BIN_DIR=$(uv tool dir --bin 2>/dev/null || echo "$HOME/.local/bin")
 case ":$PATH:" in

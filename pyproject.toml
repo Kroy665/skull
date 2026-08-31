@@ -1,6 +1,6 @@
 [project]
 name = "skull"
-version = "0.1.0"
+version = "0.1.1"
 description = "Terminal chat client for a Qwen endpoint with tool calling, self-created skills, and long-term memory."
 readme = "README.md"
 license = "GPL-3.0-or-later"
@@ -10,6 +10,11 @@ dependencies = [
     "python-dotenv",
     "beautifulsoup4",
     "sentence-transformers",
+    # Only pulled in transitively by sentence-transformers - listed here,
+    # unconstrained, purely so [tool.uv.sources] below has a direct
+    # dependency to attach its index override to (uv doesn't apply a
+    # sources override to a package that's transitive-only).
+    "torch",
     "numpy",
     "e2b-code-interpreter",
     "sqlite-vec>=0.1.9",
@@ -28,6 +33,23 @@ skull = "skull.cli:main"
 dev = [
     "pytest",
 ]
+
+# PyPI's Linux torch wheels default to a CUDA build (~2.5GB of nvidia-*
+# packages) even though this project only ever does CPU embedding
+# inference (a tiny 384-dim MiniLM model, via sentence-transformers) -
+# macOS wheels are CPU-only by default so this only bites on Linux.
+# Pointing torch at PyTorch's own CPU-only index avoids that multi-GB
+# download entirely. A uv.sources override is only honored for a direct
+# dependency (see the "torch" line above), not a transitive one.
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", marker = "sys_platform == 'linux'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [build-system]
 requires = ["hatchling"]

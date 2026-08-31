@@ -390,6 +390,20 @@ checkout.
 
 </details>
 
+**Uninstall:**
+
+```bash
+uv tool uninstall skull
+```
+
+This removes the `skull` command itself. Your data (skills, memory,
+saved conversations, `.env`) is untouched — it's per-user, not part of
+the install — so remove it separately if you want a clean slate:
+
+```bash
+rm -rf ~/.config/skull   # adjust for your platform, see table above
+```
+
 ## In-session commands
 
 | Command       | Effect                                                 |

@@ -20,6 +20,28 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 
+@pytest.fixture(autouse=True)
+def _no_live_context_limit_lookup(monkeypatch):
+    """core/compaction.py's compact_trigger_tokens() (called from
+    compact_if_needed(), in turn called from session.py's handle_turn())
+    makes a real HTTP call via config.detect_model_context_limit() the
+    first time it's needed, then caches the result for the rest of the
+    process's life. Autoused globally and forced to return None (the
+    "endpoint didn't report a context limit" case) for every test in the
+    whole suite - otherwise any test that exercises handle_turn/
+    compact_if_needed would depend on network availability and whatever
+    LLM_URL happens to be set to on the machine running the suite, not
+    just on what it mocks directly. Also resets the module-level cache
+    each test so one test's result can't leak into the next.
+    """
+    from skull.core import compaction as comp
+
+    monkeypatch.setattr(comp, "_cached_context_limit_tokens", None)
+    monkeypatch.setattr(comp.config, "detect_model_context_limit", lambda *a, **k: None)
+    monkeypatch.setattr(comp.config, "LLM_PROVIDER", "custom")  # -> FALLBACK_CONTEXT_LIMIT_TOKENS
+    yield
+
+
 @pytest.fixture
 def isolated_skills_dir(tmp_path, monkeypatch):
     """Redirect skill storage to an empty temp directory."""

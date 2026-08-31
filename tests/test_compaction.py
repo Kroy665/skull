@@ -1,8 +1,9 @@
 """Tests for core/compaction.py - the estimate/cut/summarize logic that had
 several real bugs during development (blind spots in what counted toward
 the token estimate, an internal re-check that silently nullified the
-caller's more accurate decision, and the summarization call itself being
-too large to send)."""
+caller's more accurate decision, the summarization call itself being too
+large to send, and the context limit itself being a single value hardcoded
+for one specific self-hosted endpoint - see detect_context_limit)."""
 
 import json
 
@@ -228,7 +229,7 @@ def test_compact_if_needed_force_skips_internal_threshold_check(monkeypatch):
         messages.append(_msg("user", f"msg {i}"))
         messages.append(_msg("assistant", f"reply {i}"))
 
-    assert comp.estimate_tokens(messages) < comp.COMPACT_TRIGGER_TOKENS
+    assert comp.estimate_tokens(messages) < comp.compact_trigger_tokens()
 
     _, compacted_without_force = comp.compact_if_needed(messages)
     assert compacted_without_force is False
@@ -308,3 +309,84 @@ def test_compact_if_needed_noop_with_insufficient_history(monkeypatch):
     result, compacted = comp.compact_if_needed(messages, force=True)
     assert compacted is False
     assert result == messages
+
+
+# ---------------------------------------------------------------------------
+# detect_context_limit / compact_trigger_tokens - real gap this closes:
+# the context limit used to be a single value (32768) hardcoded for this
+# project's own self-hosted Qwen endpoint - wrong for any other provider,
+# causing compaction to trigger far too early (OpenAI/Gemini's real
+# limits are much larger) or, for a different self-hosted deployment,
+# too late. Priority: a live per-model max_model_len from the endpoint's
+# own /v1/models > a per-provider default > the original hardcoded value
+# as the last resort.
+#
+# The autouse _no_live_context_limit_lookup fixture in conftest.py forces
+# detect_model_context_limit to return None and LLM_PROVIDER to "custom"
+# for every OTHER test in this file (so none of them depend on network
+# availability) - these tests explicitly override that default to
+# exercise the real priority logic.
+# ---------------------------------------------------------------------------
+
+def test_detect_context_limit_prefers_live_lookup_over_provider_default(monkeypatch):
+    monkeypatch.setattr(comp.config, "LLM_PROVIDER", "openai")
+    monkeypatch.setattr(comp.config, "detect_model_context_limit", lambda *a, **k: 200_000)
+
+    assert comp.detect_context_limit() == 200_000
+
+
+def test_detect_context_limit_falls_back_to_provider_default_when_no_live_value(monkeypatch):
+    monkeypatch.setattr(comp.config, "LLM_PROVIDER", "gemini")
+    monkeypatch.setattr(comp.config, "detect_model_context_limit", lambda *a, **k: None)
+
+    assert comp.detect_context_limit() == comp.config.PROVIDER_PRESETS["gemini"]["default_context_tokens"]
+
+
+def test_detect_context_limit_falls_back_to_hardcoded_default_for_unknown_provider(monkeypatch):
+    """A "custom" endpoint (or any value not in PROVIDER_PRESETS) has no
+    per-provider default to fall back to - must use
+    FALLBACK_CONTEXT_LIMIT_TOKENS rather than crashing on a missing key."""
+    monkeypatch.setattr(comp.config, "LLM_PROVIDER", "custom")
+    monkeypatch.setattr(comp.config, "detect_model_context_limit", lambda *a, **k: None)
+
+    assert comp.detect_context_limit() == comp.FALLBACK_CONTEXT_LIMIT_TOKENS
+
+
+def test_detect_context_limit_caches_across_calls(monkeypatch):
+    """Real bug this avoids: without caching, every single
+    compact_if_needed() check would refetch /v1/models over the network -
+    real latency added to every turn for a value that only changes on
+    reconfiguration (which requires a restart anyway)."""
+    call_count = 0
+
+    def counting_lookup(*a, **k):
+        nonlocal call_count
+        call_count += 1
+        return 200_000
+
+    monkeypatch.setattr(comp.config, "LLM_PROVIDER", "openai")
+    monkeypatch.setattr(comp.config, "detect_model_context_limit", counting_lookup)
+
+    comp.detect_context_limit()
+    comp.detect_context_limit()
+    comp.detect_context_limit()
+
+    assert call_count == 1
+
+
+def test_compact_trigger_tokens_scales_with_detected_context_limit(monkeypatch):
+    """The whole point of this feature: a provider with a much larger
+    real context window (e.g. Gemini's ~1M vs the original 32K) must get
+    a proportionally larger compaction trigger threshold, not the same
+    fixed number regardless of provider."""
+    monkeypatch.setattr(comp.config, "LLM_PROVIDER", "gemini")
+    monkeypatch.setattr(comp.config, "detect_model_context_limit", lambda *a, **k: None)
+
+    gemini_trigger = comp.compact_trigger_tokens()
+
+    monkeypatch.setattr(comp, "_cached_context_limit_tokens", None)
+    monkeypatch.setattr(comp.config, "LLM_PROVIDER", "custom")
+
+    custom_trigger = comp.compact_trigger_tokens()
+
+    assert gemini_trigger > custom_trigger * 10  # ~1M vs ~32K - a huge, not incidental, difference

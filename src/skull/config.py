@@ -106,11 +106,23 @@ PROVIDER_PRESETS = {
         "base_url": "https://api.openai.com",
         "models_path": "/v1/models",
         "search_query": "latest OpenAI GPT model",
+        # OpenAI's own /v1/models entries carry no context-window field
+        # (confirmed: id/object/owned_by/created only) - this is a
+        # reasonable current-generation default (GPT-4o/GPT-5-class),
+        # used by core/compaction.py only when a per-model live lookup
+        # isn't available. Real per-model limits vary; this is a floor
+        # meant to avoid compacting far too early, not an exact figure.
+        "default_context_tokens": 128_000,
     },
     "gemini": {
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
         "models_path": "/models",
         "search_query": "latest Google Gemini model",
+        # Same rationale as OpenAI above - Gemini's OpenAI-compat models
+        # list also carries no context-window field (confirmed:
+        # id/object/owned_by/display_name only). Current Gemini models
+        # are consistently ~1M+; used only as a fallback default.
+        "default_context_tokens": 1_000_000,
     },
 }
 
@@ -242,6 +254,48 @@ def list_available_models(base_url: str, api_key: str, models_path: str = "/v1/m
         return sorted(m["id"] for m in data if "id" in m)
     except (requests.RequestException, ValueError, KeyError, TypeError):
         return []
+
+
+def detect_model_context_limit(
+    base_url: str, api_key: str, model: str, models_path: str = "/v1/models"
+) -> int | None:
+    """Look up the real context window (in tokens) for `model` from its
+    entry in an OpenAI-compatible models-list endpoint, if that endpoint
+    actually reports one. Returns None on any failure or if the field
+    isn't present - the caller (core/compaction.py) falls back to a
+    per-provider default rather than blocking startup on this succeeding.
+
+    Real gap this closes: core/compaction.py's context limit used to be
+    a single value (32768) hardcoded for this project's own self-hosted
+    Qwen/vLLM endpoint - wrong for any other provider or self-hosted
+    deployment with a different real limit, causing compaction to
+    trigger far too early (wasting context, summarizing unnecessarily)
+    or too late (risking a real context-length error from the server).
+
+    A self-hosted vLLM endpoint's /v1/models response includes a real
+    `max_model_len` field per model (confirmed live against this
+    project's own endpoint: 32768, matching the exact number the old
+    hardcoded constant was tuned from) - reading it directly beats
+    guessing, when it's available. OpenAI's and Gemini's OpenAI-compat
+    model list entries do NOT include this field (confirmed live for
+    both: id/object/owned_by[/display_name] only) - for those, this
+    returns None and the caller uses PROVIDER_PRESETS' fallback default.
+    """
+    try:
+        resp = requests.get(
+            f"{base_url.rstrip('/')}{models_path}",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json().get("data", [])
+        for m in data:
+            if m.get("id") == model:
+                limit = m.get("max_model_len")
+                return int(limit) if isinstance(limit, (int, float)) and limit > 0 else None
+        return None
+    except (requests.RequestException, ValueError, KeyError, TypeError):
+        return None
 
 
 def _rank_models_by_web_search(models: list, search_query: str) -> list:

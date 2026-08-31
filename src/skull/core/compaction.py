@@ -14,14 +14,17 @@ import requests
 
 from skull import config
 
-# qwen3.8-27b's max_model_len is 32768 (see /v1/models). Reserve room for the
-# reply (max_tokens) and injected memory context, and compact well before
-# actually hitting the wall - both because the chars-per-token estimate is
-# approximate and because waiting until the last moment risks a request
-# that's already too large to even ask the model to summarize.
-CONTEXT_LIMIT_TOKENS = 32768
+# Fallback context limit when neither a live per-model lookup
+# (config.detect_model_context_limit - real for a self-hosted vLLM
+# endpoint) nor a per-provider default (PROVIDER_PRESETS'
+# "default_context_tokens", for OpenAI/Gemini) is available - e.g. a
+# custom endpoint that isn't vLLM and doesn't expose max_model_len
+# either. This exact number (32768) is this project's own original
+# self-hosted Qwen endpoint's real max_model_len, kept only as the
+# last-resort unknown-everything default, not a universal constant.
+FALLBACK_CONTEXT_LIMIT_TOKENS = 32768
+
 RESERVED_FOR_REPLY_TOKENS = 8192 + 1000  # max_tokens + headroom for memory injection
-COMPACT_TRIGGER_TOKENS = int((CONTEXT_LIMIT_TOKENS - RESERVED_FOR_REPLY_TOKENS) * 0.85)
 
 CHARS_PER_TOKEN = 3.5  # conservative (English/code average is ~4); errs toward compacting sooner
 
@@ -30,8 +33,57 @@ SUMMARY_MAX_TOKENS = 1024
 
 # The chunk being summarized must itself fit in the model's context (it's
 # sent as a single request), with plenty of room left for the summarization
-# instructions and the reply - cap well under the ~32k limit.
+# instructions and the reply - conservative cap that comfortably fits even
+# the smallest context this app is likely to see (the fallback above).
 MAX_TRANSCRIPT_CHARS = 24000
+
+# Cache for detect_context_limit() below - real bug this avoids: without
+# caching, every single compact_if_needed()/estimate check would refetch
+# /v1/models over the network, adding real latency to every turn for a
+# value that only changes if the user reconfigures their provider/model
+# (which requires a restart anyway - see config.py's LLM_* live-read
+# pattern elsewhere, this is the equivalent for a value worth computing
+# once instead of reading live every time).
+_cached_context_limit_tokens = None
+
+
+def detect_context_limit() -> int:
+    """Return the context window (in tokens) to plan around for the
+    currently configured LLM_URL/LLM_MODEL/LLM_PROVIDER, computed once
+    and cached for the rest of the process's life.
+
+    Priority: a live max_model_len from the endpoint's own /v1/models
+    (real, e.g. for a self-hosted vLLM deployment) > a per-provider
+    default (PROVIDER_PRESETS' "default_context_tokens", for OpenAI/
+    Gemini, whose OpenAI-compat model lists don't expose this field) >
+    FALLBACK_CONTEXT_LIMIT_TOKENS as the last resort.
+    """
+    global _cached_context_limit_tokens
+    if _cached_context_limit_tokens is not None:
+        return _cached_context_limit_tokens
+
+    models_path = config.PROVIDER_PRESETS.get(config.LLM_PROVIDER, {}).get("models_path", "/v1/models")
+    live_limit = config.detect_model_context_limit(
+        config.LLM_URL, config.LLM_KEY, config.LLM_MODEL, models_path
+    )
+    if live_limit:
+        _cached_context_limit_tokens = live_limit
+    else:
+        preset = config.PROVIDER_PRESETS.get(config.LLM_PROVIDER)
+        _cached_context_limit_tokens = (
+            preset["default_context_tokens"] if preset else FALLBACK_CONTEXT_LIMIT_TOKENS
+        )
+    return _cached_context_limit_tokens
+
+
+def compact_trigger_tokens() -> int:
+    """The estimated-token threshold at which compact_if_needed() should
+    fire - a function, not a frozen constant, so it reflects whatever
+    provider/model is actually configured (see detect_context_limit)
+    rather than a value computed once at import time for one specific
+    self-hosted endpoint."""
+    context_limit = detect_context_limit()
+    return int((context_limit - RESERVED_FOR_REPLY_TOKENS) * 0.85)
 
 
 def estimate_tokens(messages: list, tools: list = None, extra_chars: int = 0) -> int:
@@ -140,14 +192,14 @@ def compact_if_needed(messages: list, force: bool = False) -> tuple:
     use when the caller has already decided compaction is needed based on a
     more complete estimate (e.g. including tool schemas, which this function
     has no visibility into). Without it, only `messages` itself is checked
-    against COMPACT_TRIGGER_TOKENS.
+    against compact_trigger_tokens().
 
     Returns (messages, compacted: bool). On any failure to summarize (e.g.
     the summarization call itself fails), returns the original messages
     unchanged with compacted=False - better to risk hitting the context
     limit than to lose history to a failed compaction.
     """
-    if not force and estimate_tokens(messages) < COMPACT_TRIGGER_TOKENS:
+    if not force and estimate_tokens(messages) < compact_trigger_tokens():
         return messages, False
 
     if not messages or messages[0].get("role") != "system":

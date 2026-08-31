@@ -603,3 +603,98 @@ def test_list_available_models_respects_custom_models_path(tmp_path, monkeypatch
     )
 
     assert captured["url"] == "https://generativelanguage.googleapis.com/v1beta/openai/models"
+
+
+# ---------------------------------------------------------------------------
+# detect_model_context_limit - real gap this closes: core/compaction.py's
+# context limit used to be a single value (32768) hardcoded for this
+# project's own self-hosted Qwen/vLLM endpoint. A self-hosted vLLM
+# endpoint's /v1/models response includes a real max_model_len field per
+# model (confirmed live against this project's own endpoint) - reading it
+# directly beats guessing. OpenAI's/Gemini's model list entries don't
+# include this field at all (confirmed live for both).
+# ---------------------------------------------------------------------------
+
+def test_detect_model_context_limit_reads_max_model_len_for_the_matching_model(tmp_path, monkeypatch):
+    config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path))
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {
+                "data": [
+                    {"id": "other-model", "max_model_len": 8192},
+                    {"id": "qwen3.8-27b", "max_model_len": 32768},
+                ]
+            }
+
+    monkeypatch.setattr(config.requests, "get", lambda *a, **k: FakeResponse())
+
+    limit = config.detect_model_context_limit("https://my-endpoint.example.com", "key", "qwen3.8-27b")
+
+    assert limit == 32768
+
+
+def test_detect_model_context_limit_returns_none_when_field_absent(tmp_path, monkeypatch):
+    """OpenAI and Gemini's real /v1/models responses carry no context-window
+    field at all (confirmed live) - the matching model entry existing with
+    no max_model_len key must return None, not crash or invent a number."""
+    config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path))
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"data": [{"id": "gpt-5", "object": "model", "owned_by": "openai"}]}
+
+    monkeypatch.setattr(config.requests, "get", lambda *a, **k: FakeResponse())
+
+    assert config.detect_model_context_limit("https://api.openai.com", "key", "gpt-5") is None
+
+
+def test_detect_model_context_limit_returns_none_when_model_not_in_list(tmp_path, monkeypatch):
+    config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path))
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"data": [{"id": "some-other-model", "max_model_len": 8192}]}
+
+    monkeypatch.setattr(config.requests, "get", lambda *a, **k: FakeResponse())
+
+    assert config.detect_model_context_limit("https://my-endpoint.example.com", "key", "not-in-list") is None
+
+
+def test_detect_model_context_limit_returns_none_on_request_failure(tmp_path, monkeypatch):
+    import requests
+
+    config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path))
+
+    def raise_error(*a, **k):
+        raise requests.RequestException("connection failed")
+
+    monkeypatch.setattr(config.requests, "get", raise_error)
+
+    assert config.detect_model_context_limit("https://my-endpoint.example.com", "key", "any-model") is None
+
+
+def test_detect_model_context_limit_ignores_non_positive_values(tmp_path, monkeypatch):
+    """Defensive: a malformed/zero max_model_len must not become a
+    zero-or-negative compaction trigger threshold downstream."""
+    config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path))
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"data": [{"id": "weird-model", "max_model_len": 0}]}
+
+    monkeypatch.setattr(config.requests, "get", lambda *a, **k: FakeResponse())
+
+    assert config.detect_model_context_limit("https://my-endpoint.example.com", "key", "weird-model") is None

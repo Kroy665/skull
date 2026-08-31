@@ -1,6 +1,6 @@
 [project]
 name = "skull"
-version = "0.2.3"
+version = "0.3.0"
 description = "Terminal chat client for a Qwen endpoint with tool calling, self-created skills, and long-term memory."
 readme = "README.md"
 license = "GPL-3.0-or-later"

@@ -22,7 +22,7 @@ from skull.config import (
 )
 from skull.core import conversation_store
 from skull.core.client import StreamParseError, stream_chat
-from skull.core.compaction import compact_if_needed, estimate_tokens, COMPACT_TRIGGER_TOKENS
+from skull.core.compaction import compact_if_needed, compact_trigger_tokens, estimate_tokens
 from skull.core.memory_context import (
     PLAN_MODE_ADDENDUM,
     build_memory_context,
@@ -173,7 +173,7 @@ class Session:
             # includes the tool schemas too - these can be sizable once
             # several self-created skills accumulate - and the memory/plan
             # text folded into the system message, not just `messages` alone.
-            if estimate_tokens(messages, tools=tools, extra_chars=len(extra)) >= COMPACT_TRIGGER_TOKENS:
+            if estimate_tokens(messages, tools=tools, extra_chars=len(extra)) >= compact_trigger_tokens():
                 pre_len = len(messages)
                 compacted_messages, did_compact = compact_if_needed(messages, force=True)
                 if did_compact:

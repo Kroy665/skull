@@ -222,6 +222,12 @@ normal callable tool on every future turn — no restart, no re-deploy.
 - Automatic compaction summarizes the oldest chunk of conversation into a
   compact note once the estimated size crosses a safety threshold,
   instead of the session erroring out or requiring a manual reset
+- **The threshold itself is provider-aware, not one hardcoded number** —
+  a self-hosted vLLM endpoint's real context window (`max_model_len`) is
+  read live from its own `/v1/models` response; OpenAI and Gemini (whose
+  model lists don't expose that field) get a sensible per-provider
+  default instead. A 32K-token endpoint and a 1M-token one get
+  proportionally different trigger points, not the same fixed cutoff.
 - Checked on every tool round-trip within a turn, not just once at the
   start — a single turn can accumulate enough tool calls to cross the
   threshold entirely on its own
@@ -321,12 +327,12 @@ curl -LsSf https://raw.githubusercontent.com/Kroy665/skull/refs/heads/main/insta
 <summary>Or install manually (via uv, or any pip/pipx)</summary>
 
 ```bash
-uv tool install "skull @ git+https://github.com/Kroy665/skull@v0.2.3"
-# or: pipx install "skull @ git+https://github.com/Kroy665/skull@v0.2.3"
-# or: pip install "skull @ git+https://github.com/Kroy665/skull@v0.2.3"
+uv tool install "skull @ git+https://github.com/Kroy665/skull@v0.3.0"
+# or: pipx install "skull @ git+https://github.com/Kroy665/skull@v0.3.0"
+# or: pip install "skull @ git+https://github.com/Kroy665/skull@v0.3.0"
 ```
 
-Swap `v0.2.3` for whatever's [latest](https://github.com/Kroy665/skull/releases/latest).
+Swap `v0.3.0` for whatever's [latest](https://github.com/Kroy665/skull/releases/latest).
 
 </details>
 

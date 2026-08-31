@@ -16,14 +16,6 @@
 
 <p align="center"><sub>264 tests · zero external tokenizer dependency · every non-trivial feature below shipped with a real bug found by testing it against the live model, not reasoned out on paper</sub></p>
 
----
-
-<p align="center">
-  <img src="assets/demo.gif" alt="skull demo: calling an existing skill to convert units, then recalling long-term memory" width="100%">
-</p>
-
-<p align="center"><sub>Unedited recording — the model calling a self-created skill, then recalling real stored memory, in a real terminal.</sub></p>
-
 ## Why this exists
 
 Most "agent" demos wire up a model, a couple of tools, and call it done.

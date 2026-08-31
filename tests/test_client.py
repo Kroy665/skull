@@ -221,3 +221,121 @@ def test_stream_chat_includes_chat_template_kwargs_for_custom_provider(monkeypat
     stream_chat([{"role": "user", "content": "hi"}], tools=[])
 
     assert sent_payloads[0]["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+# ---------------------------------------------------------------------------
+# Two real bugs found via live testing against Gemini's OpenAI-compat
+# endpoint, in the tool-call accumulation loop:
+#
+# 1. Gemini omits "index" entirely from each streamed tool_calls delta
+#    entry (unlike OpenAI, which always includes it) and instead sends
+#    each tool call as one complete chunk with its own "id" - the
+#    previous `tc_delta.get("index", 0)` fallback silently merged every
+#    such tool call into the SAME accumulator entry (index 0), corrupting
+#    or dropping every tool call after the first in a multi-tool-call turn.
+#
+# 2. Gemini attaches a non-standard "extra_content.google.thought_signature"
+#    field to each tool_calls entry, required to be echoed back verbatim
+#    in the next request's message history - dropping it causes a real
+#    400 ("Function call is missing a thought_signature") on the very
+#    next turn after any tool call.
+# ---------------------------------------------------------------------------
+
+def test_stream_chat_does_not_merge_multiple_tool_calls_missing_index(monkeypatch):
+    """Real bug confirmed live: two genuinely separate tool calls in one
+    Gemini turn, each sent as a complete chunk with its own "id" and NO
+    "index" key at all - both used to collapse into one accumulator slot."""
+    lines = [
+        _sse(
+            '{"choices": [{"delta": {"tool_calls": ['
+            '{"id": "call_1", "type": "function", "function": {"name": "calculator", "arguments": "{\\"a\\":3,\\"b\\":4}"}}'
+            ']}}]}'
+        ),
+        _sse(
+            '{"choices": [{"delta": {"tool_calls": ['
+            '{"id": "call_2", "type": "function", "function": {"name": "calculator", "arguments": "{\\"a\\":5,\\"b\\":6}"}}'
+            ']}}]}'
+        ),
+        _sse('{"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}'),
+        _sse("[DONE]"),
+    ]
+    monkeypatch.setattr(client.requests, "post", lambda *a, **k: FakeResponse(lines))
+
+    _, tool_calls, _ = stream_chat([{"role": "user", "content": "hi"}], tools=[])
+
+    assert len(tool_calls) == 2
+    assert tool_calls[0]["id"] == "call_1"
+    assert tool_calls[0]["function"]["arguments"] == '{"a":3,"b":4}'
+    assert tool_calls[1]["id"] == "call_2"
+    assert tool_calls[1]["function"]["arguments"] == '{"a":5,"b":6}'
+
+
+def test_stream_chat_still_accumulates_openai_style_incremental_chunks_by_index(monkeypatch):
+    """Confirms the fix for the missing-index case didn't break the
+    normal OpenAI-style path, where a single tool call's arguments are
+    built up incrementally across several chunks that DO include a
+    consistent "index" - this is the pre-existing, already-tested
+    behavior in test_stream_chat_accumulates_tool_call_arguments_across_chunks,
+    re-asserted here alongside the new fallback logic to guard against a
+    future change to one path silently breaking the other."""
+    lines = [
+        _sse('{"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_1", "function": {"name": "foo", "arguments": ""}}]}}]}'),
+        _sse('{"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": "{\\"a\\": "}}]}}]}'),
+        _sse('{"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": "1}"}}]}}]}'),
+        _sse('{"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}'),
+        _sse("[DONE]"),
+    ]
+    monkeypatch.setattr(client.requests, "post", lambda *a, **k: FakeResponse(lines))
+
+    _, tool_calls, _ = stream_chat([{"role": "user", "content": "hi"}], tools=[])
+
+    assert len(tool_calls) == 1
+    assert tool_calls[0]["function"]["arguments"] == '{"a": 1}'
+
+
+def test_stream_chat_captures_gemini_thought_signature(monkeypatch):
+    """Real bug found via live testing: Gemini's non-standard
+    extra_content.google.thought_signature field on a tool_calls entry
+    used to be silently dropped, since the accumulator only read the
+    standard OpenAI fields (id, type, function). It must be carried
+    through unchanged in the returned tool call so session.py's history
+    (which stores this dict as-is) includes it on the next request -
+    omitting it causes a real 400 from Gemini on the turn after any tool
+    call ("Function call is missing a thought_signature")."""
+    lines = [
+        _sse(
+            '{"choices": [{"delta": {"tool_calls": ['
+            '{"id": "call_1", "type": "function", '
+            '"extra_content": {"google": {"thought_signature": "abc123"}}, '
+            '"function": {"name": "remember", "arguments": "{}"}}'
+            ']}}]}'
+        ),
+        _sse('{"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}'),
+        _sse("[DONE]"),
+    ]
+    monkeypatch.setattr(client.requests, "post", lambda *a, **k: FakeResponse(lines))
+
+    _, tool_calls, _ = stream_chat([{"role": "user", "content": "hi"}], tools=[])
+
+    assert tool_calls[0]["extra_content"] == {"google": {"thought_signature": "abc123"}}
+
+
+def test_stream_chat_tool_call_has_no_extra_content_key_when_provider_omits_it(monkeypatch):
+    """The flip side: a provider that never sends extra_content (OpenAI,
+    a self-hosted Qwen/vLLM endpoint) must not get one invented - an
+    empty/fake extra_content field sent back to a provider that doesn't
+    use it could itself cause a validation error."""
+    lines = [
+        _sse(
+            '{"choices": [{"delta": {"tool_calls": ['
+            '{"index": 0, "id": "call_1", "type": "function", "function": {"name": "foo", "arguments": "{}"}}'
+            ']}}]}'
+        ),
+        _sse('{"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}'),
+        _sse("[DONE]"),
+    ]
+    monkeypatch.setattr(client.requests, "post", lambda *a, **k: FakeResponse(lines))
+
+    _, tool_calls, _ = stream_chat([{"role": "user", "content": "hi"}], tools=[])
+
+    assert "extra_content" not in tool_calls[0]

@@ -106,7 +106,26 @@ def stream_chat(messages: list, tools: list, spinner: Spinner = None):
             full_content.append(piece)
 
         for tc_delta in delta.get("tool_calls") or []:
-            idx = tc_delta.get("index", 0)
+            if "index" in tc_delta:
+                idx = tc_delta["index"]
+            else:
+                # Real gap found via live testing against Gemini's
+                # OpenAI-compat endpoint: unlike OpenAI (which always sends
+                # "index" so multiple tool calls in one turn can be told
+                # apart while streaming), Gemini omits it entirely and
+                # instead sends each tool call as one complete chunk with
+                # its own "id" - defaulting to index 0 every time silently
+                # merged a second simultaneous tool call into the first's
+                # accumulator entry, corrupting/dropping it. A new "id" not
+                # already being tracked means a new tool call; otherwise
+                # (a continuation chunk for a call already seen, e.g. a
+                # provider that DOES build one call incrementally but still
+                # omits "index") match it back to that same entry.
+                call_id = tc_delta.get("id")
+                existing = next(
+                    (i for i, e in tool_calls.items() if call_id and e["id"] == call_id), None
+                )
+                idx = existing if existing is not None else len(tool_calls)
             entry = tool_calls.setdefault(
                 idx,
                 {"id": None, "type": "function", "function": {"name": "", "arguments": ""}},
@@ -120,6 +139,18 @@ def stream_chat(messages: list, tools: list, spinner: Spinner = None):
                     spinner.update(f"calling {entry['function']['name']}", style="tool_call")
             if fn_delta.get("arguments"):
                 entry["function"]["arguments"] += fn_delta["arguments"]
+            # Gemini-specific, non-standard extension (not part of the
+            # OpenAI schema): required to be echoed back verbatim on this
+            # same tool call in the NEXT request's message history, or
+            # Gemini rejects the whole request with a 400 ("Function call
+            # is missing a thought_signature"). Captured here and simply
+            # carried through unchanged in the returned tool_calls dict -
+            # session.py stores that dict as-is into message history and
+            # resends it untouched, so no other code needs to know this
+            # field exists. Harmless (and never sent) for a provider that
+            # doesn't produce it.
+            if "extra_content" in tc_delta:
+                entry["extra_content"] = tc_delta["extra_content"]
 
     if spinner and not spinner_stopped:
         spinner.stop()

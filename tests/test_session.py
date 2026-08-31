@@ -258,9 +258,72 @@ def test_run_exits_with_clear_error_when_qwen_key_not_set(monkeypatch, capsys):
 def test_run_checks_qwen_url_before_qwen_key(monkeypatch, capsys):
     """Both missing at once should report the QWEN_URL error first - it's
     checked first in run(), and a user missing both should see the more
-    fundamental problem (no endpoint at all) rather than the key error."""
+    fundamental problem (no endpoint at all) rather than the key error.
+
+    Both missing also means run() offers the interactive first-time setup
+    wizard first (see the section below) - mocked here to simulate the
+    user backing out, so this test stays focused on the fallback error
+    path rather than the wizard itself."""
     monkeypatch.setattr(session_module, "QWEN_URL", "")
     monkeypatch.setattr(session_module, "QWEN_KEY", "")
+    monkeypatch.setattr(session_module, "run_first_time_setup", lambda: None)
+
+    with pytest.raises(SystemExit):
+        session_module.run()
+
+    err = capsys.readouterr().err
+    assert "QWEN_URL" in err
+
+
+# ---------------------------------------------------------------------------
+# First-time setup wizard - real gap this fixes: previously, a user with no
+# .env at all just got a stderr error pointing at a file path they had to
+# go create themselves by hand. Now run() offers to collect QWEN_URL/
+# QWEN_KEY/QWEN_MODEL directly in the terminal on first run.
+# ---------------------------------------------------------------------------
+
+def test_run_offers_setup_wizard_when_both_unset_and_uses_its_result(monkeypatch, capsys):
+    monkeypatch.setattr(session_module, "QWEN_URL", "")
+    monkeypatch.setattr(session_module, "QWEN_KEY", "")
+    monkeypatch.setattr(
+        session_module,
+        "run_first_time_setup",
+        lambda: {"QWEN_URL": "https://from-wizard.example.com", "QWEN_KEY": "wizard-key", "QWEN_MODEL": "wizard-model"},
+    )
+
+    # Setup succeeded, so run() should proceed past both checks into the
+    # normal startup path - stop it right after by making Session() itself
+    # blow up in a way we can detect, rather than running the full REPL.
+    monkeypatch.setattr(session_module, "Session", lambda: (_ for _ in ()).throw(RuntimeError("reached Session()")))
+
+    with pytest.raises(RuntimeError, match="reached Session"):
+        session_module.run()
+
+    assert session_module.QWEN_URL == "https://from-wizard.example.com"
+    assert session_module.QWEN_KEY == "wizard-key"
+    assert session_module.QWEN_MODEL == "wizard-model"
+
+
+def test_run_does_not_offer_wizard_when_only_one_is_missing(monkeypatch, capsys):
+    """A real partial misconfiguration (e.g. a real env var set for just
+    one of the two) must get the direct, specific error - not the wizard,
+    which could look like it's silently overriding an intentional env var
+    setup for the other value."""
+    monkeypatch.setattr(session_module, "QWEN_URL", "")
+    monkeypatch.setattr(session_module, "QWEN_KEY", "some-key")
+    wizard_called = []
+    monkeypatch.setattr(session_module, "run_first_time_setup", lambda: wizard_called.append(True))
+
+    with pytest.raises(SystemExit):
+        session_module.run()
+
+    assert wizard_called == []
+
+
+def test_run_falls_back_to_error_when_wizard_is_cancelled(monkeypatch, capsys):
+    monkeypatch.setattr(session_module, "QWEN_URL", "")
+    monkeypatch.setattr(session_module, "QWEN_KEY", "")
+    monkeypatch.setattr(session_module, "run_first_time_setup", lambda: None)
 
     with pytest.raises(SystemExit):
         session_module.run()

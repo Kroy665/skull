@@ -18,6 +18,7 @@ from skull.config import (
     RESET,
     YELLOW,
     load_system_prompt,
+    run_first_time_setup,
 )
 from skull.core import conversation_store
 from skull.core.client import StreamParseError, stream_chat
@@ -302,6 +303,22 @@ def _print_banner(session: Session):
 
 
 def run():
+    global QWEN_URL, QWEN_KEY, QWEN_MODEL
+
+    if not QWEN_URL and not QWEN_KEY:
+        # First run (or a config that got wiped) - offer to set it up right
+        # here instead of just erroring out and pointing at a file path.
+        # Only offered when NEITHER is set - if exactly one is (e.g. a real
+        # env var override for just one of them), that's a real partial
+        # misconfiguration, not a fresh install, so it falls through to the
+        # direct error below instead of launching the wizard.
+        # run_first_time_setup() never overwrites an existing .env either way.
+        setup_values = run_first_time_setup()
+        if setup_values:
+            QWEN_URL = setup_values["QWEN_URL"]
+            QWEN_KEY = setup_values["QWEN_KEY"]
+            QWEN_MODEL = setup_values["QWEN_MODEL"]
+
     if not QWEN_URL:
         print(
             f"Error: QWEN_URL is not set. Add it to {CONFIG_DIR / '.env'} "

@@ -337,8 +337,17 @@ Swap `v0.1.1` for whatever's [latest](https://github.com/Kroy665/skull/releases/
 > Not published to PyPI yet — once it is, `uv tool install skull` (no
 > `git+...` URL needed) will work too.
 
-**Configure** — create `.env` in your config directory above with your
-Qwen credentials:
+**Run** from anywhere:
+
+```bash
+skull
+```
+
+**Configure** — the first time you run it with no `.env` yet, `skull`
+prompts for `QWEN_URL` and `QWEN_KEY` directly in the terminal (the key
+input is hidden) and saves them to your config directory above — no file
+editing required. To skip the prompt, or to set optional values like
+`E2B_API_KEY`, create the file yourself instead:
 
 ```bash
 mkdir -p ~/.config/skull   # adjust for your platform, see table above
@@ -348,12 +357,6 @@ QWEN_KEY=your-key-here
 # QWEN_MODEL=your-model-name
 # E2B_API_KEY=your-e2b-key   # optional, enables run_python
 EOF
-```
-
-**Run** from anywhere:
-
-```bash
-skull
 ```
 
 On first run, a local sentence-embedding model (~90MB) downloads once for

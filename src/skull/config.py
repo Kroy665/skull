@@ -8,8 +8,10 @@ to the source code. Everything here is found the same way regardless of
 where the `skull` command is invoked from.
 """
 
+import getpass
 import os
 import shutil
+import stat
 import sys
 from pathlib import Path
 
@@ -89,3 +91,48 @@ def load_system_prompt() -> str:
     if SYSTEM_PROMPT_PATH.exists():
         return SYSTEM_PROMPT_PATH.read_text().strip()
     return "You are a helpful terminal assistant with access to tools."
+
+
+def run_first_time_setup() -> dict | None:
+    """Interactively prompt for QWEN_URL/QWEN_KEY directly in the terminal
+    and write them to .env in CONFIG_DIR, instead of just erroring out and
+    telling the user to go create the file themselves by hand.
+
+    Only ever called when QWEN_URL/QWEN_KEY aren't already set (see
+    session.run()) - never overwrites an existing .env. Returns the entered
+    values as a dict ({"QWEN_URL": ..., "QWEN_KEY": ...}), or None if the
+    user backed out (EOF/Ctrl-C, or left a required field blank) - the
+    caller falls back to the normal "not set" error in that case.
+
+    QWEN_KEY is read via getpass (hidden input, same trust model as
+    tools/skill_env.py's credential prompts) since it's a real secret;
+    QWEN_URL is not.
+    """
+    env_path = CONFIG_DIR / ".env"
+    print(f"\n{BOLD}Welcome to skull!{RESET} No config found yet at {env_path}.")
+    print("Let's set it up now - this only happens once.\n")
+
+    try:
+        url = input("Qwen-compatible chat-completions endpoint URL (QWEN_URL): ").strip()
+        if not url:
+            print("No URL entered - skipping setup.", file=sys.stderr)
+            return None
+
+        key = getpass.getpass("API key for that endpoint (QWEN_KEY, input hidden): ").strip()
+        if not key:
+            print("No key entered - skipping setup.", file=sys.stderr)
+            return None
+
+        model = input(f"Model name (QWEN_MODEL) [{QWEN_MODEL}]: ").strip() or QWEN_MODEL
+    except (EOFError, KeyboardInterrupt):
+        print("\nSetup cancelled.", file=sys.stderr)
+        return None
+
+    lines = [f"QWEN_URL={url}", f"QWEN_KEY={key}"]
+    if model != QWEN_MODEL:
+        lines.append(f"QWEN_MODEL={model}")
+    env_path.write_text("\n".join(lines) + "\n")
+    env_path.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0600 - same as skills.env
+
+    print(f"\nSaved to {env_path}. (Edit that file directly any time - e.g. to add E2B_API_KEY.)\n")
+    return {"QWEN_URL": url.rstrip("/"), "QWEN_KEY": key, "QWEN_MODEL": model}

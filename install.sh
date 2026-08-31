@@ -79,15 +79,7 @@ if [ "$(uname -s)" = "Darwin" ]; then
 fi
 
 if [ ! -f "$CONFIG_DIR/.env" ]; then
-    info "skull installed. One more step before it'll run:"
-    info ""
-    info "    mkdir -p \"$CONFIG_DIR\""
-    info "    cat > \"$CONFIG_DIR/.env\" <<'EOF'"
-    info "    QWEN_URL=https://your-qwen-endpoint"
-    info "    QWEN_KEY=your-key-here"
-    info "    EOF"
-    info ""
-    info "Then run: skull"
+    info "skull installed. Run 'skull' and it'll prompt you for your Qwen endpoint URL and API key on first launch."
 else
     info "skull installed. Config already found at $CONFIG_DIR/.env - run: skull"
 fi

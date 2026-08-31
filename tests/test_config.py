@@ -122,3 +122,90 @@ def test_qwen_url_has_no_hardcoded_default(tmp_path, monkeypatch):
 def test_qwen_url_reads_from_env_when_set(tmp_path, monkeypatch):
     config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path), QWEN_URL="https://my-endpoint.example.com/")
     assert config.QWEN_URL == "https://my-endpoint.example.com"  # trailing slash stripped
+
+
+# ---------------------------------------------------------------------------
+# run_first_time_setup - real gap this fixes: a user with no .env at all
+# used to just get a stderr error naming a file path they had to go create
+# by hand. Now it's collected directly, interactively, in the terminal.
+# ---------------------------------------------------------------------------
+
+def test_run_first_time_setup_writes_env_file_and_returns_values(tmp_path, monkeypatch):
+    config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path))
+
+    inputs = iter(["https://my-qwen.example.com", "my-custom-model"])
+    monkeypatch.setattr("builtins.input", lambda *_: next(inputs))
+    monkeypatch.setattr("getpass.getpass", lambda *_: "my-secret-key")
+
+    result = config.run_first_time_setup()
+
+    assert result == {
+        "QWEN_URL": "https://my-qwen.example.com",
+        "QWEN_KEY": "my-secret-key",
+        "QWEN_MODEL": "my-custom-model",
+    }
+    env_path = config.CONFIG_DIR / ".env"
+    assert env_path.exists()
+    content = env_path.read_text()
+    assert "QWEN_URL=https://my-qwen.example.com" in content
+    assert "QWEN_KEY=my-secret-key" in content
+    assert "QWEN_MODEL=my-custom-model" in content
+
+
+def test_run_first_time_setup_defaults_model_when_left_blank(tmp_path, monkeypatch):
+    config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path))
+
+    inputs = iter(["https://my-qwen.example.com", ""])  # blank model -> keep default
+    monkeypatch.setattr("builtins.input", lambda *_: next(inputs))
+    monkeypatch.setattr("getpass.getpass", lambda *_: "my-secret-key")
+
+    result = config.run_first_time_setup()
+
+    assert result["QWEN_MODEL"] == config.QWEN_MODEL
+    # The default model isn't worth writing to the file explicitly - it's
+    # already the built-in default, so leaving it out keeps the file
+    # minimal and still correct if the built-in default ever changes.
+    content = (config.CONFIG_DIR / ".env").read_text()
+    assert "QWEN_MODEL" not in content
+
+
+def test_run_first_time_setup_returns_none_when_url_left_blank(tmp_path, monkeypatch):
+    config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path))
+    monkeypatch.setattr("builtins.input", lambda *_: "")
+
+    assert config.run_first_time_setup() is None
+    assert not (config.CONFIG_DIR / ".env").exists()
+
+
+def test_run_first_time_setup_returns_none_when_key_left_blank(tmp_path, monkeypatch):
+    config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path))
+    monkeypatch.setattr("builtins.input", lambda *_: "https://my-qwen.example.com")
+    monkeypatch.setattr("getpass.getpass", lambda *_: "")
+
+    assert config.run_first_time_setup() is None
+    assert not (config.CONFIG_DIR / ".env").exists()
+
+
+def test_run_first_time_setup_returns_none_on_keyboard_interrupt(tmp_path, monkeypatch):
+    config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path))
+
+    def raise_interrupt(*_):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("builtins.input", raise_interrupt)
+
+    assert config.run_first_time_setup() is None
+    assert not (config.CONFIG_DIR / ".env").exists()
+
+
+def test_run_first_time_setup_writes_file_with_owner_only_permissions(tmp_path, monkeypatch):
+    import stat
+
+    config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path))
+    monkeypatch.setattr("builtins.input", lambda *_: "https://my-qwen.example.com")
+    monkeypatch.setattr("getpass.getpass", lambda *_: "my-secret-key")
+
+    config.run_first_time_setup()
+
+    mode = (config.CONFIG_DIR / ".env").stat().st_mode
+    assert stat.S_IMODE(mode) == stat.S_IRUSR | stat.S_IWUSR

@@ -173,6 +173,21 @@ def test_qwen_extra_request_fields_empty_for_gemini(tmp_path, monkeypatch):
     assert config.qwen_extra_request_fields() == {}
 
 
+def test_qwen_extra_request_fields_empty_for_an_unknown_future_provider(tmp_path, monkeypatch):
+    """Real gap this guards against: the original fix used a DENYLIST of
+    providers already confirmed to reject chat_template_kwargs
+    ({"openai", "gemini"}) - any other strict OpenAI-compat provider
+    (Azure OpenAI, Together, Groq, etc.) picked via "Custom" would still
+    silently get the field and hit the exact same class of bug just
+    fixed for Gemini, undiscovered until someone filed a new report. An
+    allowlist of exactly "custom" means any value that isn't literally
+    the wizard's own self-hosted/Qwen-vLLM choice defaults to safe."""
+    config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path))
+    monkeypatch.setattr(config, "LLM_PROVIDER", "some-future-provider-nobody-has-tested-yet")
+
+    assert config.qwen_extra_request_fields() == {}
+
+
 # ---------------------------------------------------------------------------
 # run_first_time_setup - real gap this fixes: a user with no .env at all
 # used to just get a stderr error naming a file path they had to go create

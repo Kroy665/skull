@@ -114,13 +114,21 @@ PROVIDER_PRESETS = {
     },
 }
 
-# Providers whose OpenAI-compat layer is known to reject Qwen/vLLM-specific
-# request fields outright (confirmed for Gemini: a real 400 "Unknown name
-# chat_template_kwargs" - not just ignored). core/client.py and friends
-# only include chat_template_kwargs when LLM_PROVIDER isn't one of these -
-# i.e. "custom", which covers self-hosted Qwen/vLLM endpoints where that
-# field is meaningful (it disables Qwen3's "thinking" mode).
-STRICT_OPENAI_COMPAT_PROVIDERS = {"openai", "gemini"}
+# The only LLM_PROVIDER value that ever gets Qwen/vLLM-specific request
+# fields (see qwen_extra_request_fields below) - deliberately an
+# ALLOWLIST of exactly one value, not a denylist of "known-strict"
+# providers. Real bug this replaced: a denylist ({"openai", "gemini"})
+# only stops sending a Qwen-specific field to providers ALREADY confirmed
+# to reject it - anyone picking "Custom" for some other strict
+# OpenAI-compat provider (Azure OpenAI, Together, Groq, etc., not
+# actually Qwen/vLLM) would still silently get the exact same class of
+# bug just fixed for Gemini, undiscovered until someone hit it. An
+# allowlist only ever sends the field for the one case there's real
+# signal it's wanted: the user explicitly chose "Custom" in the wizard,
+# which is this project's own stated self-hosted/Qwen-vLLM use case -
+# every OTHER provider (present or future) defaults to never getting it,
+# rather than needing its own bug report first.
+_PROVIDERS_WANTING_QWEN_EXTRAS = {"custom"}
 
 # Matches model-name-shaped tokens in free-text web search results
 # (titles/snippets) - e.g. "GPT-5.6", "gemini-2.5-pro" - so they can be
@@ -174,10 +182,14 @@ def qwen_extra_request_fields() -> dict:
     Cannot find field") the first time a non-Qwen provider was actually
     used - it's a vLLM/Qwen-specific extension, not a standard
     OpenAI-compatible field, so strict implementations reject it rather
-    than silently ignoring it. Read config.LLM_PROVIDER live (not imported
-    as a frozen name) for the same reason every other config value here is
-    - see run_first_time_setup()'s docstring."""
-    if LLM_PROVIDER in STRICT_OPENAI_COMPAT_PROVIDERS:
+    than silently ignoring it. Only ever included for LLM_PROVIDER ==
+    "custom" (see _PROVIDERS_WANTING_QWEN_EXTRAS) - an allowlist, not a
+    denylist of providers already known to reject it, so a not-yet-tried
+    provider defaults to safe rather than needing its own bug report
+    first. Read config.LLM_PROVIDER live (not imported as a frozen name)
+    for the same reason every other config value here is - see
+    run_first_time_setup()'s docstring."""
+    if LLM_PROVIDER not in _PROVIDERS_WANTING_QWEN_EXTRAS:
         return {}
     return {"chat_template_kwargs": {"enable_thinking": False}}
 

@@ -199,8 +199,8 @@ def test_stream_chat_omits_chat_template_kwargs_for_gemini(monkeypatch):
 
 
 def test_stream_chat_includes_chat_template_kwargs_for_custom_provider(monkeypatch):
-    """The flip side: a self-hosted Qwen/vLLM endpoint (LLM_PROVIDER not
-    in STRICT_OPENAI_COMPAT_PROVIDERS) still gets chat_template_kwargs -
+    """The flip side: a self-hosted Qwen/vLLM endpoint (LLM_PROVIDER ==
+    "custom", the one allowlisted value) still gets chat_template_kwargs -
     the fix must not have thrown out the feature for the case it was
     actually built for."""
     from skull import config

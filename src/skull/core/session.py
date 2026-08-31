@@ -1,6 +1,7 @@
 """The turn-handling loop and the interactive REPL."""
 
 import json
+import os
 import sys
 
 import requests
@@ -18,6 +19,7 @@ from skull.config import (
     YELLOW,
     load_system_prompt,
 )
+from skull.core import conversation_store
 from skull.core.client import StreamParseError, stream_chat
 from skull.core.compaction import compact_if_needed, estimate_tokens, COMPACT_TRIGGER_TOKENS
 from skull.core.memory_context import (
@@ -41,9 +43,16 @@ class Session:
     """Holds the mutable state of one interactive chat session: message
     history, mode flags, and the background suggestion engine."""
 
-    def __init__(self):
+    def __init__(self, cwd: str | None = None):
+        self.cwd = cwd or os.getcwd()
         self.system_prompt = load_system_prompt()
-        self.messages = [{"role": "system", "content": self.system_prompt}]
+        saved = conversation_store.load(self.cwd)
+        self.resumed_message_count = 0
+        if saved:
+            self.messages = saved
+            self.resumed_message_count = len(saved) - 1  # exclude the system message
+        else:
+            self.messages = [{"role": "system", "content": self.system_prompt}]
         self.plan_mode = False
         self.verbose_tools = False
         self.input_history = []
@@ -51,6 +60,10 @@ class Session:
 
     def reset_messages(self):
         self.messages = [{"role": "system", "content": self.system_prompt}]
+        conversation_store.clear(self.cwd)
+
+    def save_messages(self):
+        conversation_store.save(self.cwd, self.messages)
 
     def _skill_ranking_query(self, user_input: str, turn_messages: list) -> str:
         """Build the text used to rank which saved skills are relevant
@@ -275,8 +288,14 @@ def _print_banner(session: Session):
     skill_names = [e["name"] for e in sm.list_skills()]
     if skill_names:
         tprint(f"{DIM}Learned skills: {', '.join(skill_names)}{RESET}")
+    if session.resumed_message_count:
+        tprint(
+            f"{DIM}Resumed conversation from this directory "
+            f"({session.resumed_message_count} messages).{RESET}"
+        )
     tprint(
-        f"{DIM}Type 'exit', 'quit', or Ctrl-D to leave. '/reset' clears history. "
+        f"{DIM}Type 'exit', 'quit', or Ctrl-D to leave. '/reset' clears history "
+        f"(including the saved copy for this directory). "
         f"'/plan' enters plan mode (research-only, no writes). '/auto' returns to normal mode. "
         f"'/verbose' shows full tool output, '/concise' collapses it back to one line (default).{RESET}\n"
     )
@@ -350,5 +369,6 @@ def run():
 
         session.suggestions.clear()
         session.handle_turn(user_input)
+        session.save_messages()
         session.suggestions.refresh(session.messages[1:])  # skip the system message
         tprint()

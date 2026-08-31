@@ -206,6 +206,22 @@ normal callable tool on every future turn — no restart, no re-deploy.
   per-row deletes, crash-safe transactions, one file per store instead of
   a jsonl/vector-file pair that can silently drift out of sync
 
+### Conversations resume per directory
+- The active conversation is saved after every turn, keyed by the
+  directory `skull` was launched from — run it again from that same
+  directory and it picks the thread back up automatically, with a note on
+  startup showing how many messages were resumed
+- A different directory gets its own independent conversation; nothing
+  crosses over between them
+- `/reset` clears both the in-memory history and the saved copy for the
+  current directory, so a reset conversation stays reset on the next launch
+
+  > [!NOTE]
+  > This is separate from the long-term memory above — memory is a
+  > fuzzy fact-recall store searched by relevance from any directory;
+  > this is the literal, ordered message list for one specific
+  > conversation thread.
+
 ### Context management that doesn't just fail
 - Automatic compaction summarizes the oldest chunk of conversation into a
   compact note once the estimated size crosses a safety threshold,
@@ -238,6 +254,7 @@ src/skull/
     core/
         client.py                streaming chat-completion calls to the Qwen endpoint
         session.py                turn-handling loop + interactive REPL
+        conversation_store.py     per-directory conversation save/resume (<config dir>/conversations/)
         memory_context.py         memory retrieval, plan-mode instruction addendum
         memory_supersede.py       two-stage (embedding + LLM) fact contradiction/paraphrase detection
         compaction.py             summarizes old history to stay within the context window
@@ -285,8 +302,9 @@ this source tree.
 
 `skull` is a real installed command, runnable from any directory once
 set up — not tied to a project checkout. Per-user data (skills, memory,
-pipelines, secrets, the editable system prompt, and `.env`) lives in a
-standard per-user config directory, found automatically:
+pipelines, saved conversations, secrets, the editable system prompt, and
+`.env`) lives in a standard per-user config directory, found
+automatically:
 
 | Platform | Config directory |
 |---|---|
@@ -359,7 +377,7 @@ checkout.
 | `/auto`       | Return to normal mode                                    |
 | `/verbose`    | Show full tool call output                               |
 | `/concise`    | Collapse tool output to a one-line summary (default)     |
-| `/reset`      | Clear conversation history (keeps mode/skills/memory)    |
+| `/reset`      | Clear conversation history, including the saved copy for this directory (keeps mode/skills/memory) |
 | `exit`/`quit` | Leave                                                    |
 
 Arrow keys: Up/Down recall previous inputs, Left/Right move the cursor.

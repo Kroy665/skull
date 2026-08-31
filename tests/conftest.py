@@ -84,3 +84,13 @@ def isolated_memory_dir(tmp_path, monkeypatch):
 
     monkeypatch.setattr(mem, "embed", fake_embed)
     return memory_dir
+
+
+@pytest.fixture
+def isolated_conversations_dir(tmp_path, monkeypatch):
+    """Redirect per-directory saved conversations to an empty temp directory."""
+    from skull.core import conversation_store as cs
+
+    conversations_dir = tmp_path / "conversations"
+    monkeypatch.setattr(cs, "CONVERSATIONS_DIR", conversations_dir)
+    return conversations_dir

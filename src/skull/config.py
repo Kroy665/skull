@@ -58,6 +58,11 @@ SYSTEM_PROMPT_PATH = CONFIG_DIR / "SYSTEM_PROMPT.md"
 SKILLS_DIR = CONFIG_DIR / "skills"
 MEMORY_DIR = CONFIG_DIR / "memory"
 PIPELINES_DIR = CONFIG_DIR / "pipelines"
+# Per-directory saved conversations (see core/conversation_store.py) - one
+# file per working directory `skull` has been launched from, so a
+# conversation resumes automatically when launched again from that same
+# directory.
+CONVERSATIONS_DIR = CONFIG_DIR / "conversations"
 # Secrets for skills (API keys, passwords) - kept separate from the app's
 # own .env so a skill's credentials are never something the model reads,
 # sets, or sees a value from; only the user can set one, via a direct

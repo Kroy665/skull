@@ -16,13 +16,13 @@ from skull.core.client import StreamParseError
 from skull.core.session import Session
 
 
-def _make_session(monkeypatch):
+def _make_session(monkeypatch, cwd=None):
     monkeypatch.setattr(session_module, "load_system_prompt", lambda: "system prompt")
-    return Session()
+    return Session(cwd=cwd)
 
 
 def test_handle_turn_recovers_from_stream_parse_error_without_crashing(
-    isolated_skills_dir, isolated_memory_dir, monkeypatch
+    isolated_skills_dir, isolated_memory_dir, isolated_conversations_dir, monkeypatch
 ):
     """The exact gap found via code review: a malformed streamed chunk
     (StreamParseError) must be caught by handle_turn and reported cleanly,
@@ -39,7 +39,7 @@ def test_handle_turn_recovers_from_stream_parse_error_without_crashing(
 
 
 def test_handle_turn_rolls_back_messages_on_stream_parse_error(
-    isolated_skills_dir, isolated_memory_dir, monkeypatch
+    isolated_skills_dir, isolated_memory_dir, isolated_conversations_dir, monkeypatch
 ):
     session = _make_session(monkeypatch)
     checkpoint_len = len(session.messages)
@@ -56,7 +56,7 @@ def test_handle_turn_rolls_back_messages_on_stream_parse_error(
     assert len(session.messages) == checkpoint_len
 
 
-def test_handle_turn_still_recovers_from_http_error(isolated_skills_dir, isolated_memory_dir, monkeypatch):
+def test_handle_turn_still_recovers_from_http_error(isolated_skills_dir, isolated_memory_dir, isolated_conversations_dir, monkeypatch):
     """Confirms the pre-existing requests.HTTPError handling still works
     after adding the new except clause - it must not have been shadowed or
     broken by the new StreamParseError branch."""
@@ -74,7 +74,7 @@ def test_handle_turn_still_recovers_from_http_error(isolated_skills_dir, isolate
     assert ok is False
 
 
-def test_handle_turn_succeeds_on_well_formed_response(isolated_skills_dir, isolated_memory_dir, monkeypatch):
+def test_handle_turn_succeeds_on_well_formed_response(isolated_skills_dir, isolated_memory_dir, isolated_conversations_dir, monkeypatch):
     session = _make_session(monkeypatch)
 
     monkeypatch.setattr(session_module, "stream_chat", lambda *a, **k: ("a reply", None, "stop"))
@@ -94,14 +94,14 @@ def test_handle_turn_succeeds_on_well_formed_response(isolated_skills_dir, isola
 # ranking query from the turn's accumulated context instead.
 # ---------------------------------------------------------------------------
 
-def test_skill_ranking_query_includes_original_user_input(isolated_skills_dir, isolated_memory_dir, monkeypatch):
+def test_skill_ranking_query_includes_original_user_input(isolated_skills_dir, isolated_memory_dir, isolated_conversations_dir, monkeypatch):
     session = _make_session(monkeypatch)
     query = session._skill_ranking_query("check my disk space", [])
     assert "check my disk space" in query
 
 
 def test_skill_ranking_query_includes_tool_call_names_from_this_turn(
-    isolated_skills_dir, isolated_memory_dir, monkeypatch
+    isolated_skills_dir, isolated_memory_dir, isolated_conversations_dir, monkeypatch
 ):
     session = _make_session(monkeypatch)
     turn_messages = [
@@ -117,7 +117,7 @@ def test_skill_ranking_query_includes_tool_call_names_from_this_turn(
     assert "97" in query  # the tool result content must be folded in too
 
 
-def test_skill_ranking_query_includes_assistant_reasoning_text(isolated_skills_dir, isolated_memory_dir, monkeypatch):
+def test_skill_ranking_query_includes_assistant_reasoning_text(isolated_skills_dir, isolated_memory_dir, isolated_conversations_dir, monkeypatch):
     session = _make_session(monkeypatch)
     turn_messages = [
         {"role": "assistant", "content": "Disk space is low, I should alert the user by email."},
@@ -126,7 +126,7 @@ def test_skill_ranking_query_includes_assistant_reasoning_text(isolated_skills_d
     assert "alert the user by email" in query
 
 
-def test_skill_ranking_query_bounds_snippet_length(isolated_skills_dir, isolated_memory_dir, monkeypatch):
+def test_skill_ranking_query_bounds_snippet_length(isolated_skills_dir, isolated_memory_dir, isolated_conversations_dir, monkeypatch):
     session = _make_session(monkeypatch)
     huge_result = "x" * 100000
     turn_messages = [{"role": "tool", "tool_call_id": "1", "content": huge_result}]
@@ -135,7 +135,7 @@ def test_skill_ranking_query_bounds_snippet_length(isolated_skills_dir, isolated
 
 
 def test_skill_ranking_query_bounds_number_of_messages_considered(
-    isolated_skills_dir, isolated_memory_dir, monkeypatch
+    isolated_skills_dir, isolated_memory_dir, isolated_conversations_dir, monkeypatch
 ):
     session = _make_session(monkeypatch)
     # An old tool result far enough back in a long turn shouldn't dominate
@@ -146,7 +146,7 @@ def test_skill_ranking_query_bounds_number_of_messages_considered(
 
 
 def test_handle_turn_reranks_skills_using_accumulated_turn_context(
-    isolated_skills_dir, isolated_memory_dir, monkeypatch
+    isolated_skills_dir, isolated_memory_dir, isolated_conversations_dir, monkeypatch
 ):
     """Integration-level confirmation: a skill whose name only appears in an
     intermediate tool result (not in the original user phrasing) must be
@@ -267,3 +267,92 @@ def test_run_checks_qwen_url_before_qwen_key(monkeypatch, capsys):
 
     err = capsys.readouterr().err
     assert "QWEN_URL" in err
+
+
+# ---------------------------------------------------------------------------
+# Per-directory conversation persistence (core/conversation_store.py) - a
+# fresh Session for a given cwd picks up any conversation previously saved
+# for that same cwd, and /reset (via reset_messages) clears the saved copy
+# too, not just the in-memory one - otherwise the next launch from that
+# directory would silently resurrect the "reset" conversation.
+# ---------------------------------------------------------------------------
+
+def test_session_starts_fresh_when_nothing_saved_for_cwd(
+    isolated_skills_dir, isolated_memory_dir, isolated_conversations_dir, monkeypatch, tmp_path
+):
+    session = _make_session(monkeypatch, cwd=str(tmp_path))
+    assert session.messages == [{"role": "system", "content": "system prompt"}]
+    assert session.resumed_message_count == 0
+
+
+def test_session_resumes_saved_conversation_for_same_cwd(
+    isolated_skills_dir, isolated_memory_dir, isolated_conversations_dir, monkeypatch, tmp_path
+):
+    from skull.core import conversation_store as cs
+
+    saved = [
+        {"role": "system", "content": "system prompt"},
+        {"role": "user", "content": "earlier question"},
+        {"role": "assistant", "content": "earlier answer"},
+    ]
+    cs.save(str(tmp_path), saved)
+
+    session = _make_session(monkeypatch, cwd=str(tmp_path))
+    assert session.messages == saved
+    assert session.resumed_message_count == 2  # excludes the system message
+
+
+def test_session_does_not_resume_conversation_saved_for_a_different_cwd(
+    isolated_skills_dir, isolated_memory_dir, isolated_conversations_dir, monkeypatch, tmp_path
+):
+    from skull.core import conversation_store as cs
+
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+    cs.save(str(other_dir), [{"role": "system", "content": "x"}, {"role": "user", "content": "hi"}])
+
+    session = _make_session(monkeypatch, cwd=str(tmp_path))
+    assert session.resumed_message_count == 0
+
+
+def test_save_messages_persists_current_messages_for_session_cwd(
+    isolated_skills_dir, isolated_memory_dir, isolated_conversations_dir, monkeypatch, tmp_path
+):
+    from skull.core import conversation_store as cs
+
+    session = _make_session(monkeypatch, cwd=str(tmp_path))
+    session.messages.append({"role": "user", "content": "hello"})
+    session.save_messages()
+
+    assert cs.load(str(tmp_path)) == session.messages
+
+
+def test_handle_turn_success_is_persisted_after_saving(
+    isolated_skills_dir, isolated_memory_dir, isolated_conversations_dir, monkeypatch, tmp_path
+):
+    from skull.core import conversation_store as cs
+
+    session = _make_session(monkeypatch, cwd=str(tmp_path))
+    monkeypatch.setattr(session_module, "stream_chat", lambda *a, **k: ("a reply", None, "stop"))
+
+    session.handle_turn("hello")
+    session.save_messages()
+
+    assert cs.load(str(tmp_path)) == session.messages
+    assert session.messages[-1] == {"role": "assistant", "content": "a reply"}
+
+
+def test_reset_messages_clears_saved_conversation_for_cwd(
+    isolated_skills_dir, isolated_memory_dir, isolated_conversations_dir, monkeypatch, tmp_path
+):
+    from skull.core import conversation_store as cs
+
+    session = _make_session(monkeypatch, cwd=str(tmp_path))
+    session.messages.append({"role": "user", "content": "hello"})
+    session.save_messages()
+    assert cs.load(str(tmp_path)) is not None
+
+    session.reset_messages()
+
+    assert session.messages == [{"role": "system", "content": "system prompt"}]
+    assert cs.load(str(tmp_path)) is None

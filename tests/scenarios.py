@@ -458,8 +458,8 @@ def main():
     parser.add_argument("--only", type=int, help="Run only scenario N (1-6)")
     args = parser.parse_args()
 
-    if not _cfg.QWEN_KEY:
-        print("QWEN_KEY is not set - these scenarios need a real live endpoint. Aborting.", file=sys.stderr)
+    if not _cfg.LLM_KEY:
+        print("LLM_KEY is not set - these scenarios need a real live endpoint. Aborting.", file=sys.stderr)
         sys.exit(1)
 
     to_run = SCENARIOS if args.only is None else [SCENARIOS[args.only - 1]]

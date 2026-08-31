@@ -73,10 +73,10 @@ def _confirm_supersedes(old_fact: str, new_fact: str) -> bool:
     )
     try:
         resp = requests.post(
-            f"{config.QWEN_URL}/v1/chat/completions",
-            headers={"Authorization": f"Bearer {config.QWEN_KEY}", "Content-Type": "application/json"},
+            f"{config.LLM_URL}/v1/chat/completions",
+            headers={"Authorization": f"Bearer {config.LLM_KEY}", "Content-Type": "application/json"},
             json={
-                "model": config.QWEN_MODEL,
+                "model": config.LLM_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
                 "max_tokens": SUPERSEDE_CHECK_MAX_TOKENS,
                 "stream": False,
@@ -131,10 +131,10 @@ def _confirm_same_fact(candidate_fact: str, requested_fact: str) -> bool:
     )
     try:
         resp = requests.post(
-            f"{config.QWEN_URL}/v1/chat/completions",
-            headers={"Authorization": f"Bearer {config.QWEN_KEY}", "Content-Type": "application/json"},
+            f"{config.LLM_URL}/v1/chat/completions",
+            headers={"Authorization": f"Bearer {config.LLM_KEY}", "Content-Type": "application/json"},
             json={
-                "model": config.QWEN_MODEL,
+                "model": config.LLM_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
                 "max_tokens": SUPERSEDE_CHECK_MAX_TOKENS,
                 "stream": False,

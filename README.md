@@ -47,10 +47,14 @@ the parts you didn't mean literally?
 
 ### Why you might *not* want this
 
-- It's built around one specific self-hosted Qwen endpoint's behavior and
-  quirks (context limit, no vision, tool-call format) — porting to a very
-  different provider means re-verifying those assumptions, not just
-  swapping a base URL.
+- It speaks one wire format — OpenAI-compatible `/v1/chat/completions`
+  (OpenAI, Gemini, or a self-hosted endpoint that implements it) — not
+  each provider's own native SDK, so provider-specific features outside
+  that shape (e.g. a real Anthropic Messages API integration) aren't
+  supported yet.
+- Some assumptions (context limit heuristics, no vision handling) were
+  tuned against a specific self-hosted endpoint during development and
+  may need re-verifying on a very different provider's actual behavior.
 - Every mutating tool other than skill creation is intentionally slow to
   use safely: shell commands and file writes require an interactive y/n
   every single time, by design. If you want a fully autonomous, no-prompts
@@ -244,7 +248,7 @@ src/skull/
     config.py                    per-user config directory, env vars, terminal colors
     SYSTEM_PROMPT.md              bundled default prompt, copied to the config dir on first run
     core/
-        client.py                streaming chat-completion calls to the Qwen endpoint
+        client.py                streaming chat-completion calls to the configured LLM endpoint
         session.py                turn-handling loop + interactive REPL
         conversation_store.py     per-directory conversation save/resume (<config dir>/conversations/)
         memory_context.py         memory retrieval, plan-mode instruction addendum
@@ -286,7 +290,7 @@ this source tree.
 | **OS** | macOS or Linux — raw-terminal input is POSIX-only; Windows falls back to plain input (no ghost text/history) but should still run |
 | **Python** | 3.12+ — `sqlite-vec` needs SQLite's extension-loading support, which some pyenv/system-built Python 3.10 installs lack |
 | **Package manager** | [uv](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh \| sh`) — `uv sync` fetches a matching Python automatically if you don't have one |
-| **API** | A Qwen-compatible chat-completions endpoint and key |
+| **API** | An OpenAI-compatible chat-completions endpoint and key — OpenAI, Gemini, or any self-hosted endpoint (e.g. Qwen) that speaks this format |
 | **E2B key** (optional) | Enables `run_python` and the sandbox file tools — everything else works without it |
 | **`tesseract`** (optional) | Enables OCR on image files (`brew install tesseract` / `apt install tesseract-ocr`) — without it, reading an image returns a clear error, never a silent failure |
 
@@ -317,12 +321,12 @@ curl -LsSf https://raw.githubusercontent.com/Kroy665/skull/refs/heads/main/insta
 <summary>Or install manually (via uv, or any pip/pipx)</summary>
 
 ```bash
-uv tool install "skull @ git+https://github.com/Kroy665/skull@v0.1.4"
-# or: pipx install "skull @ git+https://github.com/Kroy665/skull@v0.1.4"
-# or: pip install "skull @ git+https://github.com/Kroy665/skull@v0.1.4"
+uv tool install "skull @ git+https://github.com/Kroy665/skull@v0.2.0"
+# or: pipx install "skull @ git+https://github.com/Kroy665/skull@v0.2.0"
+# or: pip install "skull @ git+https://github.com/Kroy665/skull@v0.2.0"
 ```
 
-Swap `v0.1.4` for whatever's [latest](https://github.com/Kroy665/skull/releases/latest).
+Swap `v0.2.0` for whatever's [latest](https://github.com/Kroy665/skull/releases/latest).
 
 </details>
 
@@ -344,17 +348,22 @@ skull
 ```
 
 **Configure** — the first time you run it with no `.env` yet, `skull`
-prompts for `QWEN_URL` and `QWEN_KEY` directly in the terminal (the key
-input is hidden) and saves them to your config directory above — no file
-editing required. To skip the prompt, or to set optional values like
-`E2B_API_KEY`, create the file yourself instead:
+walks you through setup interactively: pick a provider from an arrow-key
+menu (OpenAI, Gemini, or a custom/self-hosted OpenAI-compatible URL),
+enter your API key (input hidden), then pick a model from that
+endpoint's live model list — ranked using a live web search for what's
+actually current, so "latest model" isn't a stale hardcoded guess —
+type to filter, or type a model name directly if you know it. Saved
+straight to your config directory above, no file editing required. To
+skip the prompt, or to set optional values like `E2B_API_KEY`, create
+the file yourself instead:
 
 ```bash
 mkdir -p ~/.config/skull   # adjust for your platform, see table above
 cat > ~/.config/skull/.env <<'EOF'
-QWEN_URL=https://your-qwen-endpoint
-QWEN_KEY=your-key-here
-# QWEN_MODEL=your-model-name
+LLM_URL=https://api.openai.com/v1
+LLM_KEY=your-key-here
+LLM_MODEL=gpt-5
 # E2B_API_KEY=your-e2b-key   # optional, enables run_python
 EOF
 ```
@@ -461,12 +470,12 @@ caught the bugs above, not the mocked suite.
 
 ## Environment variables
 
-| Variable      | Required | Default                            | Purpose                                    |
-|---------------|----------|-------------------------------------|---------------------------------------------|
-| `QWEN_URL`    | Yes      | —                                    | Your Qwen-compatible chat-completions endpoint |
-| `QWEN_KEY`    | Yes      | —                                    | Bearer token for your chat-completions endpoint |
-| `QWEN_MODEL`  | No       | `qwen3.8-27b`                        | Model name                                   |
-| `E2B_API_KEY` | No       | —                                    | Enables `run_python` and sandbox file tools  |
+| Variable      | Required | Default | Purpose                                    |
+|---------------|----------|---------|---------------------------------------------|
+| `LLM_URL`     | Yes      | —       | An OpenAI-compatible chat-completions endpoint (OpenAI, Gemini, or self-hosted) |
+| `LLM_KEY`     | Yes      | —       | API key / bearer token for that endpoint     |
+| `LLM_MODEL`   | Yes      | —       | Model name for that endpoint (e.g. `gpt-5`, `gemini-2.5-pro`) |
+| `E2B_API_KEY` | No       | —       | Enables `run_python` and sandbox file tools  |
 
 ## License
 

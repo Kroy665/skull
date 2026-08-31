@@ -114,10 +114,10 @@ def _summarize(messages_to_summarize: list) -> str:
     )
 
     resp = requests.post(
-        f"{config.QWEN_URL}/v1/chat/completions",
-        headers={"Authorization": f"Bearer {config.QWEN_KEY}", "Content-Type": "application/json"},
+        f"{config.LLM_URL}/v1/chat/completions",
+        headers={"Authorization": f"Bearer {config.LLM_KEY}", "Content-Type": "application/json"},
         json={
-            "model": config.QWEN_MODEL,
+            "model": config.LLM_MODEL,
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": SUMMARY_MAX_TOKENS,
             "stream": False,

@@ -12,9 +12,9 @@ from skull.config import (
     DIM,
     GREEN,
     MAGENTA,
-    QWEN_KEY,
-    QWEN_MODEL,
-    QWEN_URL,
+    LLM_KEY,
+    LLM_MODEL,
+    LLM_URL,
     RESET,
     YELLOW,
     load_system_prompt,
@@ -57,7 +57,7 @@ class Session:
         self.plan_mode = False
         self.verbose_tools = False
         self.input_history = []
-        self.suggestions = SuggestionEngine(QWEN_URL, QWEN_KEY, QWEN_MODEL)
+        self.suggestions = SuggestionEngine(LLM_URL, LLM_KEY, LLM_MODEL)
 
     def reset_messages(self):
         self.messages = [{"role": "system", "content": self.system_prompt}]
@@ -301,7 +301,7 @@ class Session:
 
 
 def _print_banner(session: Session):
-    tprint(f"{BOLD}Qwen terminal chat{RESET} {DIM}({QWEN_MODEL} @ {QWEN_URL}){RESET}")
+    tprint(f"{BOLD}skull{RESET} {DIM}({LLM_MODEL} @ {LLM_URL}){RESET}")
     tprint(f"{DIM}Built-in tools: {', '.join(BUILTIN_IMPLS)}{RESET}")
     skill_names = [e["name"] for e in sm.list_skills()]
     if skill_names:
@@ -320,9 +320,9 @@ def _print_banner(session: Session):
 
 
 def run():
-    global QWEN_URL, QWEN_KEY, QWEN_MODEL
+    global LLM_URL, LLM_KEY, LLM_MODEL
 
-    if not QWEN_URL and not QWEN_KEY:
+    if not LLM_URL and not LLM_KEY:
         # First run (or a config that got wiped) - offer to set it up right
         # here instead of just erroring out and pointing at a file path.
         # Only offered when NEITHER is set - if exactly one is (e.g. a real
@@ -332,22 +332,29 @@ def run():
         # run_first_time_setup() never overwrites an existing .env either way.
         setup_values = run_first_time_setup()
         if setup_values:
-            QWEN_URL = setup_values["QWEN_URL"]
-            QWEN_KEY = setup_values["QWEN_KEY"]
-            QWEN_MODEL = setup_values["QWEN_MODEL"]
+            LLM_URL = setup_values["LLM_URL"]
+            LLM_KEY = setup_values["LLM_KEY"]
+            LLM_MODEL = setup_values["LLM_MODEL"]
 
-    if not QWEN_URL:
+    if not LLM_URL:
         print(
-            f"Error: QWEN_URL is not set. Add it to {CONFIG_DIR / '.env'} "
-            "(e.g. QWEN_URL=https://your-qwen-endpoint), or set it as a real environment variable. "
-            "This must point at your own Qwen-compatible chat-completions endpoint.",
+            f"Error: LLM_URL is not set. Add it to {CONFIG_DIR / '.env'} "
+            "(e.g. LLM_URL=https://api.openai.com/v1), or set it as a real environment variable. "
+            "This must point at an OpenAI-compatible chat-completions endpoint.",
             file=sys.stderr,
         )
         sys.exit(1)
-    if not QWEN_KEY:
+    if not LLM_KEY:
         print(
-            f"Error: QWEN_KEY is not set. Add it to {CONFIG_DIR / '.env'} "
-            "(e.g. QWEN_KEY=your-key-here), or set it as a real environment variable.",
+            f"Error: LLM_KEY is not set. Add it to {CONFIG_DIR / '.env'} "
+            "(e.g. LLM_KEY=your-key-here), or set it as a real environment variable.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if not LLM_MODEL:
+        print(
+            f"Error: LLM_MODEL is not set. Add it to {CONFIG_DIR / '.env'} "
+            "(e.g. LLM_MODEL=gpt-5), or set it as a real environment variable.",
             file=sys.stderr,
         )
         sys.exit(1)

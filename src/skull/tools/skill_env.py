@@ -17,7 +17,7 @@ what's configured without ever seeing a value.
 Stored in SKILLS_ENV_PATH (skills.env at the project root, gitignored,
 separate from the app's own .env) as plain KEY=VALUE lines, permissioned
 0600 (owner read/write only) - the same trust model .env already uses for
-QWEN_KEY/E2B_API_KEY, extended to per-skill secrets instead of just app
+LLM_KEY/E2B_API_KEY, extended to per-skill secrets instead of just app
 config.
 """
 

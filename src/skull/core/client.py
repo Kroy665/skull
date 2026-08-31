@@ -39,13 +39,13 @@ def stream_chat(messages: list, tools: list, spinner: Spinner = None):
         spinner.start("thinking", style="thinking")
 
     resp = requests.post(
-        f"{config.QWEN_URL}/v1/chat/completions",
+        f"{config.LLM_URL}/v1/chat/completions",
         headers={
-            "Authorization": f"Bearer {config.QWEN_KEY}",
+            "Authorization": f"Bearer {config.LLM_KEY}",
             "Content-Type": "application/json",
         },
         json={
-            "model": config.QWEN_MODEL,
+            "model": config.LLM_MODEL,
             "messages": messages,
             "max_tokens": 8192,
             "stream": True,

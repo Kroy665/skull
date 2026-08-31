@@ -1,6 +1,6 @@
 [project]
 name = "skull"
-version = "0.1.4"
+version = "0.2.0"
 description = "Terminal chat client for a Qwen endpoint with tool calling, self-created skills, and long-term memory."
 readme = "README.md"
 license = "GPL-3.0-or-later"
@@ -24,6 +24,7 @@ dependencies = [
     "python-pptx>=1.0.2",
     "pytesseract>=0.3.13",
     "pillow>=12.3.0",
+    "questionary>=2.1.1",
 ]
 
 [project.scripts]

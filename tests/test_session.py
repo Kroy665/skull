@@ -274,36 +274,36 @@ def test_handle_turn_reranks_skills_using_accumulated_turn_context(
 
 # ---------------------------------------------------------------------------
 # run() - the module-level REPL entry point's required-config checks. Real
-# requirement: QWEN_URL has no built-in default endpoint (removed along with
+# requirement: LLM_URL has no built-in default endpoint (removed along with
 # every other reference to the original hardcoded self-hosted domain), so it
-# must be checked and reported just as clearly as the pre-existing QWEN_KEY
+# must be checked and reported just as clearly as the pre-existing LLM_KEY
 # check, not left to fail later with a confusing malformed-URL request error.
 # ---------------------------------------------------------------------------
 
 def test_run_exits_with_clear_error_when_qwen_url_not_set(monkeypatch, capsys):
-    monkeypatch.setattr(session_module, "QWEN_URL", "")
-    monkeypatch.setattr(session_module, "QWEN_KEY", "some-key")
+    monkeypatch.setattr(session_module, "LLM_URL", "")
+    monkeypatch.setattr(session_module, "LLM_KEY", "some-key")
 
     with pytest.raises(SystemExit):
         session_module.run()
 
     err = capsys.readouterr().err
-    assert "QWEN_URL" in err
+    assert "LLM_URL" in err
 
 
 def test_run_exits_with_clear_error_when_qwen_key_not_set(monkeypatch, capsys):
-    monkeypatch.setattr(session_module, "QWEN_URL", "https://example.com")
-    monkeypatch.setattr(session_module, "QWEN_KEY", "")
+    monkeypatch.setattr(session_module, "LLM_URL", "https://example.com")
+    monkeypatch.setattr(session_module, "LLM_KEY", "")
 
     with pytest.raises(SystemExit):
         session_module.run()
 
     err = capsys.readouterr().err
-    assert "QWEN_KEY" in err
+    assert "LLM_KEY" in err
 
 
 def test_run_checks_qwen_url_before_qwen_key(monkeypatch, capsys):
-    """Both missing at once should report the QWEN_URL error first - it's
+    """Both missing at once should report the LLM_URL error first - it's
     checked first in run(), and a user missing both should see the more
     fundamental problem (no endpoint at all) rather than the key error.
 
@@ -311,31 +311,31 @@ def test_run_checks_qwen_url_before_qwen_key(monkeypatch, capsys):
     wizard first (see the section below) - mocked here to simulate the
     user backing out, so this test stays focused on the fallback error
     path rather than the wizard itself."""
-    monkeypatch.setattr(session_module, "QWEN_URL", "")
-    monkeypatch.setattr(session_module, "QWEN_KEY", "")
+    monkeypatch.setattr(session_module, "LLM_URL", "")
+    monkeypatch.setattr(session_module, "LLM_KEY", "")
     monkeypatch.setattr(session_module, "run_first_time_setup", lambda: None)
 
     with pytest.raises(SystemExit):
         session_module.run()
 
     err = capsys.readouterr().err
-    assert "QWEN_URL" in err
+    assert "LLM_URL" in err
 
 
 # ---------------------------------------------------------------------------
 # First-time setup wizard - real gap this fixes: previously, a user with no
 # .env at all just got a stderr error pointing at a file path they had to
-# go create themselves by hand. Now run() offers to collect QWEN_URL/
-# QWEN_KEY/QWEN_MODEL directly in the terminal on first run.
+# go create themselves by hand. Now run() offers to collect LLM_URL/
+# LLM_KEY/LLM_MODEL directly in the terminal on first run.
 # ---------------------------------------------------------------------------
 
 def test_run_offers_setup_wizard_when_both_unset_and_uses_its_result(monkeypatch, capsys):
-    monkeypatch.setattr(session_module, "QWEN_URL", "")
-    monkeypatch.setattr(session_module, "QWEN_KEY", "")
+    monkeypatch.setattr(session_module, "LLM_URL", "")
+    monkeypatch.setattr(session_module, "LLM_KEY", "")
     monkeypatch.setattr(
         session_module,
         "run_first_time_setup",
-        lambda: {"QWEN_URL": "https://from-wizard.example.com", "QWEN_KEY": "wizard-key", "QWEN_MODEL": "wizard-model"},
+        lambda: {"LLM_URL": "https://from-wizard.example.com", "LLM_KEY": "wizard-key", "LLM_MODEL": "wizard-model"},
     )
 
     # Setup succeeded, so run() should proceed past both checks into the
@@ -346,9 +346,9 @@ def test_run_offers_setup_wizard_when_both_unset_and_uses_its_result(monkeypatch
     with pytest.raises(RuntimeError, match="reached Session"):
         session_module.run()
 
-    assert session_module.QWEN_URL == "https://from-wizard.example.com"
-    assert session_module.QWEN_KEY == "wizard-key"
-    assert session_module.QWEN_MODEL == "wizard-model"
+    assert session_module.LLM_URL == "https://from-wizard.example.com"
+    assert session_module.LLM_KEY == "wizard-key"
+    assert session_module.LLM_MODEL == "wizard-model"
 
 
 def test_run_does_not_offer_wizard_when_only_one_is_missing(monkeypatch, capsys):
@@ -356,8 +356,8 @@ def test_run_does_not_offer_wizard_when_only_one_is_missing(monkeypatch, capsys)
     one of the two) must get the direct, specific error - not the wizard,
     which could look like it's silently overriding an intentional env var
     setup for the other value."""
-    monkeypatch.setattr(session_module, "QWEN_URL", "")
-    monkeypatch.setattr(session_module, "QWEN_KEY", "some-key")
+    monkeypatch.setattr(session_module, "LLM_URL", "")
+    monkeypatch.setattr(session_module, "LLM_KEY", "some-key")
     wizard_called = []
     monkeypatch.setattr(session_module, "run_first_time_setup", lambda: wizard_called.append(True))
 
@@ -368,15 +368,15 @@ def test_run_does_not_offer_wizard_when_only_one_is_missing(monkeypatch, capsys)
 
 
 def test_run_falls_back_to_error_when_wizard_is_cancelled(monkeypatch, capsys):
-    monkeypatch.setattr(session_module, "QWEN_URL", "")
-    monkeypatch.setattr(session_module, "QWEN_KEY", "")
+    monkeypatch.setattr(session_module, "LLM_URL", "")
+    monkeypatch.setattr(session_module, "LLM_KEY", "")
     monkeypatch.setattr(session_module, "run_first_time_setup", lambda: None)
 
     with pytest.raises(SystemExit):
         session_module.run()
 
     err = capsys.readouterr().err
-    assert "QWEN_URL" in err
+    assert "LLM_URL" in err
 
 
 # ---------------------------------------------------------------------------

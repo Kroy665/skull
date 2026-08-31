@@ -47,7 +47,7 @@ confirmation from the model first.
 
 import requests
 
-from skull.config import QWEN_KEY, QWEN_MODEL, QWEN_URL
+from skull import config
 from skull.storage import store as mem
 
 SUPERSEDE_CANDIDATE_MIN_SCORE = 0.35
@@ -73,10 +73,10 @@ def _confirm_supersedes(old_fact: str, new_fact: str) -> bool:
     )
     try:
         resp = requests.post(
-            f"{QWEN_URL}/v1/chat/completions",
-            headers={"Authorization": f"Bearer {QWEN_KEY}", "Content-Type": "application/json"},
+            f"{config.QWEN_URL}/v1/chat/completions",
+            headers={"Authorization": f"Bearer {config.QWEN_KEY}", "Content-Type": "application/json"},
             json={
-                "model": QWEN_MODEL,
+                "model": config.QWEN_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
                 "max_tokens": SUPERSEDE_CHECK_MAX_TOKENS,
                 "stream": False,
@@ -131,10 +131,10 @@ def _confirm_same_fact(candidate_fact: str, requested_fact: str) -> bool:
     )
     try:
         resp = requests.post(
-            f"{QWEN_URL}/v1/chat/completions",
-            headers={"Authorization": f"Bearer {QWEN_KEY}", "Content-Type": "application/json"},
+            f"{config.QWEN_URL}/v1/chat/completions",
+            headers={"Authorization": f"Bearer {config.QWEN_KEY}", "Content-Type": "application/json"},
             json={
-                "model": QWEN_MODEL,
+                "model": config.QWEN_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
                 "max_tokens": SUPERSEDE_CHECK_MAX_TOKENS,
                 "stream": False,

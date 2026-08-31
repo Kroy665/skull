@@ -112,3 +112,31 @@ def test_stream_chat_accumulates_tool_call_arguments_across_chunks(monkeypatch):
     assert tool_calls == [
         {"id": "call_1", "type": "function", "function": {"name": "foo", "arguments": '{"a": 1}'}}
     ]
+
+
+def test_stream_chat_uses_a_live_updated_qwen_url_not_an_import_time_snapshot(monkeypatch):
+    """Real bug found via a live install: the first-run setup wizard
+    (config.run_first_time_setup) updates skull.config.QWEN_URL after
+    QWEN_URL was found empty at startup, but client.py used to do
+    `from skull.config import QWEN_URL` - a frozen copy taken once at
+    import time. The wizard's update never reached that frozen copy, so
+    every request after "successful" first-run setup still went to
+    '/v1/chat/completions' with no scheme or host at all. client.py must
+    read config.QWEN_URL live, at call time, not via a one-time import."""
+    from skull import config
+
+    monkeypatch.setattr(config, "QWEN_URL", "https://set-after-client-py-was-imported.example.com")
+    monkeypatch.setattr(config, "QWEN_KEY", "a-key")
+    monkeypatch.setattr(config, "QWEN_MODEL", "a-model")
+
+    requested_urls = []
+
+    def fake_post(url, **kwargs):
+        requested_urls.append(url)
+        return FakeResponse([_sse("[DONE]")])
+
+    monkeypatch.setattr(client.requests, "post", fake_post)
+
+    stream_chat([{"role": "user", "content": "hi"}], tools=[])
+
+    assert requested_urls == ["https://set-after-client-py-was-imported.example.com/v1/chat/completions"]

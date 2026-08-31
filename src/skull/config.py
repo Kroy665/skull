@@ -107,7 +107,17 @@ def run_first_time_setup() -> dict | None:
     QWEN_KEY is read via getpass (hidden input, same trust model as
     tools/skill_env.py's credential prompts) since it's a real secret;
     QWEN_URL is not.
+
+    Also updates this module's own QWEN_URL/QWEN_KEY/QWEN_MODEL globals -
+    every other module that needs these reads them as `config.QWEN_URL`
+    etc. at call time (never `from skull.config import QWEN_URL`, which
+    freezes a copy at import time - the exact bug this fixes: client.py,
+    compaction.py, and memory_supersede.py each had their own frozen,
+    still-empty copy even after this function ran and the wizard reported
+    success, sending every request to a URL-less endpoint).
     """
+    global QWEN_URL, QWEN_KEY, QWEN_MODEL
+
     env_path = CONFIG_DIR / ".env"
     print(f"\n{BOLD}Welcome to skull!{RESET} No config found yet at {env_path}.")
     print("Let's set it up now - this only happens once.\n")
@@ -135,4 +145,8 @@ def run_first_time_setup() -> dict | None:
     env_path.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0600 - same as skills.env
 
     print(f"\nSaved to {env_path}. (Edit that file directly any time - e.g. to add E2B_API_KEY.)\n")
-    return {"QWEN_URL": url.rstrip("/"), "QWEN_KEY": key, "QWEN_MODEL": model}
+
+    QWEN_URL = url.rstrip("/")
+    QWEN_KEY = key
+    QWEN_MODEL = model
+    return {"QWEN_URL": QWEN_URL, "QWEN_KEY": QWEN_KEY, "QWEN_MODEL": QWEN_MODEL}

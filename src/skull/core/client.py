@@ -5,7 +5,8 @@ import sys
 
 import requests
 
-from skull.config import CYAN, QWEN_KEY, QWEN_MODEL, QWEN_URL, RESET
+from skull import config
+from skull.config import CYAN, RESET
 from skull.ui.output import tprint, twrite
 from skull.ui.spinner import Spinner
 
@@ -38,13 +39,13 @@ def stream_chat(messages: list, tools: list, spinner: Spinner = None):
         spinner.start("thinking", style="thinking")
 
     resp = requests.post(
-        f"{QWEN_URL}/v1/chat/completions",
+        f"{config.QWEN_URL}/v1/chat/completions",
         headers={
-            "Authorization": f"Bearer {QWEN_KEY}",
+            "Authorization": f"Bearer {config.QWEN_KEY}",
             "Content-Type": "application/json",
         },
         json={
-            "model": QWEN_MODEL,
+            "model": config.QWEN_MODEL,
             "messages": messages,
             "max_tokens": 8192,
             "stream": True,

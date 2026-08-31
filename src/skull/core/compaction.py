@@ -12,7 +12,7 @@ import json
 
 import requests
 
-from skull.config import QWEN_KEY, QWEN_MODEL, QWEN_URL
+from skull import config
 
 # qwen3.8-27b's max_model_len is 32768 (see /v1/models). Reserve room for the
 # reply (max_tokens) and injected memory context, and compact well before
@@ -114,10 +114,10 @@ def _summarize(messages_to_summarize: list) -> str:
     )
 
     resp = requests.post(
-        f"{QWEN_URL}/v1/chat/completions",
-        headers={"Authorization": f"Bearer {QWEN_KEY}", "Content-Type": "application/json"},
+        f"{config.QWEN_URL}/v1/chat/completions",
+        headers={"Authorization": f"Bearer {config.QWEN_KEY}", "Content-Type": "application/json"},
         json={
-            "model": QWEN_MODEL,
+            "model": config.QWEN_MODEL,
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": SUMMARY_MAX_TOKENS,
             "stream": False,

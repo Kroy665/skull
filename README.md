@@ -312,8 +312,15 @@ automatically:
 | macOS | `~/Library/Application Support/skull` |
 | Windows | `%APPDATA%\skull` |
 
-**Install** directly from this repo (via [uv](https://docs.astral.sh/uv/),
-or any `pip`/`pipx`):
+**Install** with one command — installs [uv](https://docs.astral.sh/uv/)
+first if you don't already have it, then `skull` itself:
+
+```bash
+curl -LsSf https://kroy.dev/skull/install.sh | sh
+```
+
+<details>
+<summary>Or install manually (via uv, or any pip/pipx)</summary>
 
 ```bash
 uv tool install git+https://github.com/Kroy665/skull.git
@@ -321,12 +328,11 @@ uv tool install git+https://github.com/Kroy665/skull.git
 # or: pip install git+https://github.com/Kroy665/skull.git
 ```
 
+</details>
+
 > [!NOTE]
-> This repo is currently private, so the install command above only
-> works for someone with their own access to it (added as a
-> collaborator, authenticated via SSH or a personal access token). Not
-> published to PyPI yet — once it is, `uv tool install skull` (no
-> `git+...` URL needed) will work for anyone.
+> Not published to PyPI yet — once it is, `uv tool install skull` (no
+> `git+...` URL needed) will work too.
 
 **Configure** — create `.env` in your config directory above with your
 Qwen credentials:

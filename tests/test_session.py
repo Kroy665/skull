@@ -85,6 +85,53 @@ def test_handle_turn_succeeds_on_well_formed_response(isolated_skills_dir, isola
 
 
 # ---------------------------------------------------------------------------
+# Real bug found via a live install with no network access to Hugging Face:
+# the local embedding model failing to load (no internet, corrupted cache,
+# disk full) used to be a raw uncaught exception - crashing the whole
+# process even after the model had already produced a perfectly good
+# answer the user could see. Both call sites that touch the embedder
+# (memory retrieval before the model call, and conversation logging after)
+# must degrade gracefully instead.
+# ---------------------------------------------------------------------------
+
+def test_handle_turn_survives_memory_context_failure(
+    isolated_skills_dir, isolated_memory_dir, isolated_conversations_dir, monkeypatch
+):
+    session = _make_session(monkeypatch)
+    monkeypatch.setattr(session_module, "stream_chat", lambda *a, **k: ("a reply", None, "stop"))
+
+    def broken_memory_context(*a, **k):
+        raise OSError("couldn't connect to huggingface.co")
+
+    monkeypatch.setattr(session_module, "build_memory_context", broken_memory_context)
+
+    ok = session.handle_turn("hello")
+    assert ok is True
+    assert session.messages[-1] == {"role": "assistant", "content": "a reply"}
+
+
+def test_handle_turn_survives_conversation_memory_write_failure(
+    isolated_skills_dir, isolated_memory_dir, isolated_conversations_dir, monkeypatch
+):
+    from skull.storage import store as mem
+
+    session = _make_session(monkeypatch)
+    monkeypatch.setattr(session_module, "stream_chat", lambda *a, **k: ("a reply", None, "stop"))
+
+    class BrokenStore:
+        def add(self, *a, **k):
+            raise OSError("couldn't connect to huggingface.co")
+
+    monkeypatch.setattr(mem, "conversations", lambda: BrokenStore())
+
+    ok = session.handle_turn("hello")
+    # The turn itself still succeeds - the user already has their answer -
+    # even though saving it to long-term memory failed.
+    assert ok is True
+    assert session.messages[-1] == {"role": "assistant", "content": "a reply"}
+
+
+# ---------------------------------------------------------------------------
 # _skill_ranking_query - real gap found via code review: skill relevance
 # filtering (see registry.py's SKILL_FILTER_THRESHOLD) re-ranked against the
 # ORIGINAL user_input every round-trip within a turn, frozen for the whole

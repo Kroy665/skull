@@ -154,7 +154,15 @@ class Session:
                 always_include_skills=skills_used_this_turn,
             )
 
-            memory_block = build_memory_context(user_input)
+            # Best-effort: a failure here (e.g. the local embedding model
+            # failing to download on a fresh install with no network) must
+            # degrade to "no memory context this turn", not crash before
+            # the model is even called.
+            try:
+                memory_block = build_memory_context(user_input)
+            except Exception as e:
+                tprint(f"{YELLOW}Couldn't load long-term memory context: {e}{RESET}")
+                memory_block = ""
             extra = memory_block + (PLAN_MODE_ADDENDUM if self.plan_mode else "")
 
             # Re-check on every round-trip, not just once at turn start: a
@@ -224,10 +232,19 @@ class Session:
 
             if not tool_calls:
                 if content:
-                    mem.conversations().add(
-                        f"User: {user_input}\nAssistant: {content}",
-                        {"role": "exchange"},
-                    )
+                    # Best-effort: the turn itself already succeeded and the
+                    # user already has their answer above, so a failure here
+                    # (e.g. the local embedding model failing to download on
+                    # a fresh install with no network) must not crash the
+                    # whole session over what's just a long-term-memory
+                    # side effect.
+                    try:
+                        mem.conversations().add(
+                            f"User: {user_input}\nAssistant: {content}",
+                            {"role": "exchange"},
+                        )
+                    except Exception as e:
+                        tprint(f"{YELLOW}Couldn't save this turn to long-term memory: {e}{RESET}")
                 return True
 
             malformed = [

@@ -3,6 +3,8 @@ search ranking, delete-by-exact-text, and reload-from-disk), using the
 isolated_memory_dir fixture's fake deterministic embedder instead of a real
 network-downloaded model."""
 
+import os
+
 import numpy as np
 
 from skull.storage import store as mem
@@ -262,3 +264,63 @@ def test_conversations_and_persona_are_separate_stores(isolated_memory_dir):
     assert mem.conversations().count() == 1
     assert mem.persona().all()[0]["text"] == "a persona fact"
     assert mem.conversations().all()[0]["text"] == "a conversation turn"
+
+
+# ---------------------------------------------------------------------------
+# _get_model() - real bug found via a live install on a machine with no
+# network access to Hugging Face: HF_HUB_OFFLINE was set unconditionally on
+# every call, which on a FRESH install (the model never cached yet) turned
+# the very first legitimate download attempt into an immediate, uncaught
+# "couldn't connect and nothing cached" crash - offline mode should only
+# ever apply once the model is confirmed already cached locally.
+# ---------------------------------------------------------------------------
+
+def test_get_model_does_not_force_offline_when_not_yet_cached(monkeypatch):
+    # _model and HF_HUB_OFFLINE are both module/process-global state, shared
+    # with every other test in the suite - monkeypatch restores both
+    # automatically after this test, so real usage elsewhere is unaffected.
+    monkeypatch.setattr(mem, "_model", None)
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.setattr("huggingface_hub.try_to_load_from_cache", lambda *a, **k: None)
+    monkeypatch.setattr("sentence_transformers.SentenceTransformer", lambda *a, **k: object())
+
+    mem._get_model()
+
+    assert "HF_HUB_OFFLINE" not in os.environ
+
+
+def test_get_model_forces_offline_when_already_cached(monkeypatch):
+    monkeypatch.setattr(mem, "_model", None)
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.setattr(
+        "huggingface_hub.try_to_load_from_cache", lambda *a, **k: "/fake/cache/path/config.json"
+    )
+    monkeypatch.setattr("sentence_transformers.SentenceTransformer", lambda *a, **k: object())
+
+    mem._get_model()
+
+    assert os.environ.get("HF_HUB_OFFLINE") == "1"
+
+
+def test_get_model_checks_cache_using_the_full_hf_repo_id(monkeypatch):
+    """Real bug this guards against: sentence-transformers resolves the
+    short model name (EMBED_MODEL_NAME, "all-MiniLM-L6-v2") to the full HF
+    repo id ("sentence-transformers/all-MiniLM-L6-v2") internally, and the
+    on-disk cache is keyed by that full id - checking the short name
+    against try_to_load_from_cache always misses, even when the model IS
+    genuinely cached, silently defeating the whole point of the offline
+    optimization (a slow network round-trip on every single startup,
+    forever, never caught by the two tests above since they don't inspect
+    which id was actually queried)."""
+    monkeypatch.setattr(mem, "_model", None)
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    seen_repo_ids = []
+    monkeypatch.setattr(
+        "huggingface_hub.try_to_load_from_cache",
+        lambda repo_id, *a, **k: seen_repo_ids.append(repo_id) or None,
+    )
+    monkeypatch.setattr("sentence_transformers.SentenceTransformer", lambda *a, **k: object())
+
+    mem._get_model()
+
+    assert seen_repo_ids == ["sentence-transformers/all-MiniLM-L6-v2"]

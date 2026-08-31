@@ -34,6 +34,11 @@ import sqlite_vec
 from skull.config import MEMORY_DIR
 
 EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
+# sentence-transformers resolves the short name above to this full HF repo
+# id internally - the cache (and try_to_load_from_cache below) is keyed by
+# the full id, not the short name, so this has to match exactly or the
+# cache check always misses.
+_EMBED_MODEL_HF_REPO = "sentence-transformers/all-MiniLM-L6-v2"
 EMBED_DIM = 384  # all-MiniLM-L6-v2's fixed output size - the vec0 table needs this at creation time
 
 _model = None
@@ -45,11 +50,19 @@ def _get_model():
     if _model is None:
         with _model_lock:
             if _model is None:
+                from huggingface_hub import try_to_load_from_cache
+                from sentence_transformers import SentenceTransformer
+
                 # Once the model is cached locally, skip the Hugging Face Hub
                 # metadata check entirely - it's a slow, noisy network round
                 # trip on every process start for a model that never changes.
-                os.environ.setdefault("HF_HUB_OFFLINE", "1")
-                from sentence_transformers import SentenceTransformer
+                # Only go offline once the cache actually has it, though -
+                # forcing this unconditionally broke the very first run on a
+                # fresh install (no cache yet), turning "no internet to
+                # config.json" into an uncaught crash instead of a real
+                # download attempt.
+                if try_to_load_from_cache(_EMBED_MODEL_HF_REPO, "config.json"):
+                    os.environ.setdefault("HF_HUB_OFFLINE", "1")
                 _model = SentenceTransformer(EMBED_MODEL_NAME)
     return _model
 

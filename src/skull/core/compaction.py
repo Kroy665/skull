@@ -121,7 +121,7 @@ def _summarize(messages_to_summarize: list) -> str:
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": SUMMARY_MAX_TOKENS,
             "stream": False,
-            "chat_template_kwargs": {"enable_thinking": False},
+            **config.qwen_extra_request_fields(),
         },
         timeout=60,
     )

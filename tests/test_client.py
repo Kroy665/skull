@@ -140,3 +140,84 @@ def test_stream_chat_uses_a_live_updated_qwen_url_not_an_import_time_snapshot(mo
     stream_chat([{"role": "user", "content": "hi"}], tools=[])
 
     assert requested_urls == ["https://set-after-client-py-was-imported.example.com/v1/chat/completions"]
+
+
+def test_stream_chat_uses_the_openai_preset_url_without_a_doubled_v1(monkeypatch):
+    """Real bug found via live testing: PROVIDER_PRESETS["openai"]["base_url"]
+    used to be "https://api.openai.com/v1" (already including /v1), and
+    stream_chat's own hardcoded "/v1/chat/completions" suffix turned that
+    into ".../v1/v1/chat/completions" - a real 404 from OpenAI (confirmed
+    live via curl: 404 for the doubled path, 401 - reaching the real
+    endpoint - for the correct single-/v1 path). The preset must be a bare
+    host with no /v1, since stream_chat always appends the full
+    "/v1/chat/completions" itself."""
+    from skull import config
+
+    monkeypatch.setattr(config, "LLM_URL", config.PROVIDER_PRESETS["openai"]["base_url"])
+    monkeypatch.setattr(config, "LLM_KEY", "a-key")
+    monkeypatch.setattr(config, "LLM_MODEL", "gpt-5")
+    monkeypatch.setattr(config, "LLM_PROVIDER", "openai")
+
+    requested_urls = []
+
+    def fake_post(url, **kwargs):
+        requested_urls.append(url)
+        return FakeResponse([_sse("[DONE]")])
+
+    monkeypatch.setattr(client.requests, "post", fake_post)
+
+    stream_chat([{"role": "user", "content": "hi"}], tools=[])
+
+    assert requested_urls == ["https://api.openai.com/v1/chat/completions"]
+
+
+def test_stream_chat_omits_chat_template_kwargs_for_gemini(monkeypatch):
+    """Real bug found via a live Gemini setup: chat_template_kwargs (a
+    Qwen/vLLM-specific extension) used to be sent unconditionally, and
+    Gemini's OpenAI-compat layer rejects it outright with a real 400
+    ("Unknown name \"chat_template_kwargs\": Cannot find field") -
+    breaking every single chat turn immediately after a successful
+    first-run setup."""
+    from skull import config
+
+    monkeypatch.setattr(config, "LLM_URL", "https://generativelanguage.googleapis.com/v1beta/openai")
+    monkeypatch.setattr(config, "LLM_KEY", "a-key")
+    monkeypatch.setattr(config, "LLM_MODEL", "gemini-2.5-flash")
+    monkeypatch.setattr(config, "LLM_PROVIDER", "gemini")
+
+    sent_payloads = []
+
+    def fake_post(url, json=None, **kwargs):
+        sent_payloads.append(json)
+        return FakeResponse([_sse("[DONE]")])
+
+    monkeypatch.setattr(client.requests, "post", fake_post)
+
+    stream_chat([{"role": "user", "content": "hi"}], tools=[])
+
+    assert "chat_template_kwargs" not in sent_payloads[0]
+
+
+def test_stream_chat_includes_chat_template_kwargs_for_custom_provider(monkeypatch):
+    """The flip side: a self-hosted Qwen/vLLM endpoint (LLM_PROVIDER not
+    in STRICT_OPENAI_COMPAT_PROVIDERS) still gets chat_template_kwargs -
+    the fix must not have thrown out the feature for the case it was
+    actually built for."""
+    from skull import config
+
+    monkeypatch.setattr(config, "LLM_URL", "https://my-qwen-endpoint.example.com")
+    monkeypatch.setattr(config, "LLM_KEY", "a-key")
+    monkeypatch.setattr(config, "LLM_MODEL", "qwen3.8-27b")
+    monkeypatch.setattr(config, "LLM_PROVIDER", "custom")
+
+    sent_payloads = []
+
+    def fake_post(url, json=None, **kwargs):
+        sent_payloads.append(json)
+        return FakeResponse([_sse("[DONE]")])
+
+    monkeypatch.setattr(client.requests, "post", fake_post)
+
+    stream_chat([{"role": "user", "content": "hi"}], tools=[])
+
+    assert sent_payloads[0]["chat_template_kwargs"] == {"enable_thinking": False}

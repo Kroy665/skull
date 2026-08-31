@@ -11,6 +11,8 @@ import threading
 
 import requests
 
+from skull import config
+
 SUGGESTION_MAX_TOKENS = 40
 SUGGESTION_TIMEOUT_SECONDS = 20
 CONTEXT_TURNS = 6  # how many recent messages to include as context
@@ -83,7 +85,7 @@ class SuggestionEngine:
                 "messages": messages,
                 "max_tokens": SUGGESTION_MAX_TOKENS,
                 "stream": False,
-                "chat_template_kwargs": {"enable_thinking": False},
+                **config.qwen_extra_request_fields(),
             },
             timeout=SUGGESTION_TIMEOUT_SECONDS,
         )

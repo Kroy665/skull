@@ -80,7 +80,7 @@ def _confirm_supersedes(old_fact: str, new_fact: str) -> bool:
                 "messages": [{"role": "user", "content": prompt}],
                 "max_tokens": SUPERSEDE_CHECK_MAX_TOKENS,
                 "stream": False,
-                "chat_template_kwargs": {"enable_thinking": False},
+                **config.qwen_extra_request_fields(),
             },
             timeout=30,
         )
@@ -138,7 +138,7 @@ def _confirm_same_fact(candidate_fact: str, requested_fact: str) -> bool:
                 "messages": [{"role": "user", "content": prompt}],
                 "max_tokens": SUPERSEDE_CHECK_MAX_TOKENS,
                 "stream": False,
-                "chat_template_kwargs": {"enable_thinking": False},
+                **config.qwen_extra_request_fields(),
             },
             timeout=30,
         )

@@ -75,29 +75,79 @@ CONVERSATIONS_DIR = CONFIG_DIR / "conversations"
 SKILLS_ENV_PATH = CONFIG_DIR / "skills.env"
 
 # Presets for run_first_time_setup()'s provider picker - a base URL to
-# pre-fill (every provider here exposes an OpenAI-compatible
-# /v1/chat/completions + /v1/models pair - the whole reason this is scoped
-# to these providers instead of each one's own native SDK/wire format, see
-# core/client.py) and a web search query used to figure out which of that
+# pre-fill and a web search query used to figure out which of that
 # endpoint's models are actually current (see _rank_models_by_web_search) -
 # the /models list itself is unranked and mixes in non-chat models.
+#
+# LLM_URL's convention, everywhere in this app: `base_url` is exactly the
+# prefix such that "{base_url}/v1/chat/completions" is the real,
+# correct chat-completions URL - core/client.py, compaction.py,
+# memory_supersede.py, and ui/suggestion.py all hardcode that literal
+# "/v1/chat/completions" suffix and never special-case a provider. This
+# is also what a real self-hosted/custom endpoint needs (confirmed live
+# against this project's own Qwen/vLLM endpoint: the bare host needs
+# "/v1/chat/completions" appended, same as OpenAI).
+#
+# Real bug this fixes: the OpenAI preset used to store
+# "https://api.openai.com/v1" (WITH a /v1 already), which combined with
+# client.py's own suffix produced ".../v1/v1/chat/completions" - a real
+# 404 from OpenAI (confirmed live), not just cosmetic redundancy.
+#
+# Gemini is the one exception to the shared convention: its real
+# OpenAI-compat prefix (v1beta/openai) already serves the role a literal
+# "/v1" plays elsewhere, so its /v1/models equivalent is reached at
+# plain "/models", not "/v1/models" - see models_path below, used only
+# by list_available_models (chat-completions still uses the one shared
+# "/v1/chat/completions" suffix everywhere, since Gemini tolerates the
+# resulting doubled /v1 there - confirmed live: identical response
+# either way).
 PROVIDER_PRESETS = {
     "openai": {
-        "base_url": "https://api.openai.com/v1",
+        "base_url": "https://api.openai.com",
+        "models_path": "/v1/models",
         "search_query": "latest OpenAI GPT model",
     },
     "gemini": {
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "models_path": "/models",
         "search_query": "latest Google Gemini model",
     },
 }
 
-# Matches model-id-shaped tokens in free-text web search results (titles/
-# snippets) - e.g. "GPT-5.6", "gemini-2.5-pro" - so they can be checked
-# against a provider's real /v1/models list. Deliberately generic (not
-# hardcoded to today's specific model names) so it keeps working as
+# Providers whose OpenAI-compat layer is known to reject Qwen/vLLM-specific
+# request fields outright (confirmed for Gemini: a real 400 "Unknown name
+# chat_template_kwargs" - not just ignored). core/client.py and friends
+# only include chat_template_kwargs when LLM_PROVIDER isn't one of these -
+# i.e. "custom", which covers self-hosted Qwen/vLLM endpoints where that
+# field is meaningful (it disables Qwen3's "thinking" mode).
+STRICT_OPENAI_COMPAT_PROVIDERS = {"openai", "gemini"}
+
+# Matches model-name-shaped tokens in free-text web search results
+# (titles/snippets) - e.g. "GPT-5.6", "gemini-2.5-pro" - so they can be
+# checked against a provider's real /v1/models list. Deliberately generic
+# (not hardcoded to today's specific model names) so it keeps working as
 # providers release new versions.
-_MODEL_TOKEN_RE = re.compile(r"\b(gpt|gemini|o)[-.]?[0-9][a-z0-9.\-]*", re.IGNORECASE)
+#
+# Real bug this regex used to have: prose almost always writes the name
+# with a SPACE before the version ("Gemini 3.5 Flash", "GPT 5.6"), not a
+# hyphen/dot the way an actual API id does ("gemini-3.5-flash") - the
+# original pattern only allowed "-"/"." as the separator and matched
+# nothing at all in real search results, silently defeating the entire
+# ranking feature (it always fell back to unranked results, confirmed
+# live against Gemini's actual model list and a real web search for
+# "latest Google Gemini model"). Allowing a space too, normalized to "-"
+# before comparing against the real model list, fixes the miss.
+#
+# The trailing capture is bounded to at most 2 more short (<=12 char)
+# hyphen/space-joined segments after the version number, rather than
+# running on unbounded - an earlier unbounded version swallowed whole
+# sentences ("Gemini 3 introduces Google's latest...") as a single
+# "token". A little residual over-capture (e.g. "Gemini 3 introduces")
+# is harmless: it just never matches any real /v1/models entry and gets
+# silently ignored by _rank_models_by_web_search's substring check.
+_MODEL_TOKEN_RE = re.compile(
+    r"\b(gpt|gemini|o)[-. ]?[0-9][a-z0-9.]*(?:[-\s][a-z0-9.]{1,12}){0,2}", re.IGNORECASE
+)
 
 LLM_URL = (os.environ.get("LLM_URL") or "").rstrip("/")
 # No hardcoded default: this app is no longer tied to one specific
@@ -106,6 +156,31 @@ LLM_URL = (os.environ.get("LLM_URL") or "").rstrip("/")
 # picked a different provider without also remembering to override this.
 LLM_MODEL = os.environ.get("LLM_MODEL") or ""
 LLM_KEY = os.environ.get("LLM_KEY")
+# Which provider run_first_time_setup()'s picker chose ("openai", "gemini",
+# or "custom") - defaults to "custom" (the permissive assumption) when
+# unset, e.g. a .env hand-written before this field existed, or a real
+# self-hosted endpoint that was never routed through the wizard at all.
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER") or "custom"
+
+
+def qwen_extra_request_fields() -> dict:
+    """Extra request body fields to merge into every chat-completion call
+    (core/client.py, compaction.py, memory_supersede.py, ui/suggestion.py) -
+    currently just chat_template_kwargs, which disables Qwen3's "thinking"
+    mode on a self-hosted Qwen/vLLM endpoint.
+
+    Real bug this fixes: sending chat_template_kwargs unconditionally broke
+    Gemini outright (a real 400: "Unknown name \"chat_template_kwargs\":
+    Cannot find field") the first time a non-Qwen provider was actually
+    used - it's a vLLM/Qwen-specific extension, not a standard
+    OpenAI-compatible field, so strict implementations reject it rather
+    than silently ignoring it. Read config.LLM_PROVIDER live (not imported
+    as a frozen name) for the same reason every other config value here is
+    - see run_first_time_setup()'s docstring."""
+    if LLM_PROVIDER in STRICT_OPENAI_COMPAT_PROVIDERS:
+        return {}
+    return {"chat_template_kwargs": {"enable_thinking": False}}
+
 
 RESET = "\033[0m"
 BOLD = "\033[1m"
@@ -125,12 +200,18 @@ def load_system_prompt() -> str:
     return "You are a helpful terminal assistant with access to tools."
 
 
-def list_available_models(base_url: str, api_key: str) -> list:
-    """Fetch the model id list from an OpenAI-compatible /v1/models (or
-    equivalent) endpoint, for the setup wizard's model picker. Returns []
-    on any failure (bad key, unreachable host, unexpected shape) - the
-    wizard falls back to asking for a model name to type in by hand
-    rather than blocking setup on this call succeeding.
+def list_available_models(base_url: str, api_key: str, models_path: str = "/v1/models") -> list:
+    """Fetch the model id list from an OpenAI-compatible models-list
+    endpoint, for the setup wizard's model picker. Returns [] on any
+    failure (bad key, unreachable host, unexpected shape) - the wizard
+    falls back to asking for a model name to type in by hand rather than
+    blocking setup on this call succeeding.
+
+    `models_path` defaults to "/v1/models" (correct for OpenAI and a
+    custom/self-hosted endpoint, matching the same "{base_url}/v1/..."
+    convention core/client.py uses for chat completions) - a preset with
+    a different real path (see PROVIDER_PRESETS' "models_path", currently
+    just Gemini) overrides it.
 
     No filtering by name/capability: OpenAI's own list mixes chat models
     in with embeddings/whisper/tts/etc, but a hand-rolled allow/deny list
@@ -140,7 +221,7 @@ def list_available_models(base_url: str, api_key: str) -> list:
     """
     try:
         resp = requests.get(
-            f"{base_url.rstrip('/')}/models",
+            f"{base_url.rstrip('/')}{models_path}",
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=15,
         )
@@ -228,7 +309,7 @@ def run_first_time_setup() -> dict | None:
     still-empty copy even after this function ran and the wizard reported
     success, sending every request to a URL-less endpoint).
     """
-    global LLM_URL, LLM_KEY, LLM_MODEL
+    global LLM_URL, LLM_KEY, LLM_MODEL, LLM_PROVIDER
 
     env_path = CONFIG_DIR / ".env"
     print(f"\n{BOLD}Welcome to skull!{RESET} No config found yet at {env_path}.")
@@ -250,9 +331,11 @@ def run_first_time_setup() -> dict | None:
         if provider == "custom":
             url = questionary.text("Chat-completions endpoint base URL (LLM_URL):").ask()
             search_query = None
+            models_path = "/v1/models"
         else:
             url = PROVIDER_PRESETS[provider]["base_url"]
             search_query = PROVIDER_PRESETS[provider]["search_query"]
+            models_path = PROVIDER_PRESETS[provider]["models_path"]
         if not url:
             print("No URL entered - skipping setup.", file=sys.stderr)
             return None
@@ -265,7 +348,7 @@ def run_first_time_setup() -> dict | None:
 
         model = None
         print("Looking up available models...")
-        models = list_available_models(url, key)
+        models = list_available_models(url, key, models_path)
         if models:
             if search_query:
                 print("Checking the web for which of these are current...")
@@ -291,7 +374,7 @@ def run_first_time_setup() -> dict | None:
         print("\nSetup cancelled.", file=sys.stderr)
         return None
 
-    lines = [f"LLM_URL={url}", f"LLM_KEY={key}", f"LLM_MODEL={model}"]
+    lines = [f"LLM_URL={url}", f"LLM_KEY={key}", f"LLM_MODEL={model}", f"LLM_PROVIDER={provider}"]
     env_path.write_text("\n".join(lines) + "\n")
     env_path.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0600 - same as skills.env
 
@@ -300,4 +383,5 @@ def run_first_time_setup() -> dict | None:
     LLM_URL = url
     LLM_KEY = key
     LLM_MODEL = model
-    return {"LLM_URL": LLM_URL, "LLM_KEY": LLM_KEY, "LLM_MODEL": LLM_MODEL}
+    LLM_PROVIDER = provider
+    return {"LLM_URL": LLM_URL, "LLM_KEY": LLM_KEY, "LLM_MODEL": LLM_MODEL, "LLM_PROVIDER": LLM_PROVIDER}

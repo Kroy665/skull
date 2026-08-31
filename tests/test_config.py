@@ -133,6 +133,46 @@ def test_llm_model_has_no_hardcoded_default(tmp_path, monkeypatch):
     assert config.LLM_MODEL == ""
 
 
+def test_llm_provider_defaults_to_custom_when_unset(tmp_path, monkeypatch):
+    """A .env written before LLM_PROVIDER existed, or a self-hosted
+    endpoint set up outside the wizard entirely, must default to the
+    permissive "custom" assumption - not silently start dropping
+    chat_template_kwargs for what's actually a Qwen/vLLM endpoint."""
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path))
+    assert config.LLM_PROVIDER == "custom"
+
+
+# ---------------------------------------------------------------------------
+# qwen_extra_request_fields - real bug found via a live Gemini setup: the
+# app used to send chat_template_kwargs (a Qwen/vLLM-specific extension
+# that disables Qwen3's "thinking" mode) unconditionally on every request,
+# to every provider. Gemini's OpenAI-compat layer rejects it outright with
+# a real 400 ("Unknown name \"chat_template_kwargs\": Cannot find field"),
+# breaking every single chat turn immediately after a successful setup.
+# ---------------------------------------------------------------------------
+
+def test_qwen_extra_request_fields_included_for_custom_provider(tmp_path, monkeypatch):
+    config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path))
+    monkeypatch.setattr(config, "LLM_PROVIDER", "custom")
+
+    assert config.qwen_extra_request_fields() == {"chat_template_kwargs": {"enable_thinking": False}}
+
+
+def test_qwen_extra_request_fields_empty_for_openai(tmp_path, monkeypatch):
+    config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path))
+    monkeypatch.setattr(config, "LLM_PROVIDER", "openai")
+
+    assert config.qwen_extra_request_fields() == {}
+
+
+def test_qwen_extra_request_fields_empty_for_gemini(tmp_path, monkeypatch):
+    config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path))
+    monkeypatch.setattr(config, "LLM_PROVIDER", "gemini")
+
+    assert config.qwen_extra_request_fields() == {}
+
+
 # ---------------------------------------------------------------------------
 # run_first_time_setup - real gap this fixes: a user with no .env at all
 # used to just get a stderr error naming a file path they had to go create
@@ -184,7 +224,7 @@ def _fake_questionary(monkeypatch, config, answers):
 
 def test_run_first_time_setup_custom_url_with_model_list(tmp_path, monkeypatch):
     config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path))
-    monkeypatch.setattr(config, "list_available_models", lambda url, key: ["model-b", "model-a"])
+    monkeypatch.setattr(config, "list_available_models", lambda url, key, models_path=None: ["model-b", "model-a"])
 
     # provider select -> "custom", url text, key (getpass), model select
     _fake_questionary(monkeypatch, config, ["custom", "https://my-qwen.example.com", "model-a"])
@@ -196,17 +236,19 @@ def test_run_first_time_setup_custom_url_with_model_list(tmp_path, monkeypatch):
         "LLM_URL": "https://my-qwen.example.com",
         "LLM_KEY": "my-secret-key",
         "LLM_MODEL": "model-a",
+        "LLM_PROVIDER": "custom",
     }
     env_path = config.CONFIG_DIR / ".env"
     content = env_path.read_text()
     assert "LLM_URL=https://my-qwen.example.com" in content
     assert "LLM_KEY=my-secret-key" in content
     assert "LLM_MODEL=model-a" in content
+    assert "LLM_PROVIDER=custom" in content
 
 
 def test_run_first_time_setup_openai_preset_prefills_url_and_ranks_models(tmp_path, monkeypatch):
     config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path))
-    monkeypatch.setattr(config, "list_available_models", lambda url, key: ["gpt-4o", "gpt-5"])
+    monkeypatch.setattr(config, "list_available_models", lambda url, key, models_path=None: ["gpt-4o", "gpt-5"])
     monkeypatch.setattr(config, "_rank_models_by_web_search", lambda models, query: ["gpt-5", "gpt-4o"])
 
     _fake_questionary(monkeypatch, config, ["openai", "gpt-5"])  # provider select, model select
@@ -220,7 +262,7 @@ def test_run_first_time_setup_openai_preset_prefills_url_and_ranks_models(tmp_pa
 
 def test_run_first_time_setup_gemini_preset_prefills_url(tmp_path, monkeypatch):
     config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path))
-    monkeypatch.setattr(config, "list_available_models", lambda url, key: ["gemini-2.5-pro"])
+    monkeypatch.setattr(config, "list_available_models", lambda url, key, models_path=None: ["gemini-2.5-pro"])
     monkeypatch.setattr(config, "_rank_models_by_web_search", lambda models, query: models)
 
     _fake_questionary(monkeypatch, config, ["gemini", "gemini-2.5-pro"])
@@ -233,7 +275,7 @@ def test_run_first_time_setup_gemini_preset_prefills_url(tmp_path, monkeypatch):
 
 def test_run_first_time_setup_falls_back_to_typed_model_when_list_fails(tmp_path, monkeypatch):
     config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path))
-    monkeypatch.setattr(config, "list_available_models", lambda url, key: [])
+    monkeypatch.setattr(config, "list_available_models", lambda url, key, models_path=None: [])
 
     _fake_questionary(monkeypatch, config, ["custom", "https://my-qwen.example.com", "my-typed-model"])
     monkeypatch.setattr("getpass.getpass", lambda *_: "my-secret-key")
@@ -247,7 +289,7 @@ def test_run_first_time_setup_custom_provider_skips_web_ranking(tmp_path, monkey
     """A custom/self-hosted endpoint has no PROVIDER_PRESETS search_query -
     ranking must be skipped (not crash trying to search for "None")."""
     config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path))
-    monkeypatch.setattr(config, "list_available_models", lambda url, key: ["model-b", "model-a"])
+    monkeypatch.setattr(config, "list_available_models", lambda url, key, models_path=None: ["model-b", "model-a"])
 
     def fail_if_called(*a, **k):
         raise AssertionError("_rank_models_by_web_search must not be called for a custom provider")
@@ -288,7 +330,7 @@ def test_run_first_time_setup_returns_none_when_key_left_blank(tmp_path, monkeyp
 
 def test_run_first_time_setup_returns_none_when_model_selection_cancelled(tmp_path, monkeypatch):
     config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path))
-    monkeypatch.setattr(config, "list_available_models", lambda url, key: ["model-a"])
+    monkeypatch.setattr(config, "list_available_models", lambda url, key, models_path=None: ["model-a"])
     monkeypatch.setattr(config, "_rank_models_by_web_search", lambda models, query: models)
     _fake_questionary(monkeypatch, config, ["openai", None])  # model select cancelled
     monkeypatch.setattr("getpass.getpass", lambda *_: "my-secret-key")
@@ -313,7 +355,7 @@ def test_run_first_time_setup_writes_file_with_owner_only_permissions(tmp_path, 
     import stat
 
     config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path))
-    monkeypatch.setattr(config, "list_available_models", lambda url, key: [])
+    monkeypatch.setattr(config, "list_available_models", lambda url, key, models_path=None: [])
 
     _fake_questionary(monkeypatch, config, ["custom", "https://my-qwen.example.com", "a-model"])
     monkeypatch.setattr("getpass.getpass", lambda *_: "my-secret-key")
@@ -349,6 +391,37 @@ def test_rank_models_by_web_search_surfaces_mentioned_models_first(tmp_path, mon
 
     assert ranked[0] == "gpt-5.6"
     assert set(ranked) == set(models)  # never drops or invents a model id
+
+
+def test_rank_models_by_web_search_matches_space_separated_prose_names(tmp_path, monkeypatch):
+    """Real bug found via a live Gemini setup: search results almost always
+    write the model name with a SPACE before the version ("Gemini 3.5
+    Flash"), never the hyphenated form an actual API id uses
+    ("gemini-3.5-flash") - the original regex only recognized a hyphen/dot
+    separator and matched nothing at all against real search results,
+    silently defeating the whole ranking feature (confirmed live: it
+    always fell back to unranked order, surfacing Veo/Lyria/Gemma noise
+    above real Gemini chat models)."""
+    config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path))
+
+    def fake_web_search(query, count=8):
+        return {
+            "query": query,
+            "results": [
+                {
+                    "title": "Gemini 3.5: Introducing the latest Gemini AI model",
+                    "snippet": "Google's new Gemini 3.5 Flash model outperforms previous versions.",
+                },
+            ],
+        }
+
+    monkeypatch.setattr("skull.tools.web.web_search", fake_web_search)
+
+    models = ["models/gemini-2.5-flash", "models/gemini-3.5-flash", "models/veo-3.1-generate-preview"]
+    ranked = config._rank_models_by_web_search(models, "latest Google Gemini model")
+
+    assert ranked[0] == "models/gemini-3.5-flash"
+    assert set(ranked) == set(models)
 
 
 def test_rank_models_by_web_search_falls_back_on_search_failure(tmp_path, monkeypatch):
@@ -457,7 +530,61 @@ def test_list_available_models_sends_bearer_auth_header(tmp_path, monkeypatch):
 
     monkeypatch.setattr(config.requests, "get", fake_get)
 
-    config.list_available_models("https://example.com/v1/", "my-key")
+    config.list_available_models("https://example.com/", "my-key")
 
     assert captured["url"] == "https://example.com/v1/models"
     assert captured["headers"]["Authorization"] == "Bearer my-key"
+
+
+def test_list_available_models_uses_default_v1_models_path(tmp_path, monkeypatch):
+    """Default models_path ("/v1/models") matches the same
+    "{base_url}/v1/..." convention core/client.py uses for chat
+    completions - correct for OpenAI and a custom/self-hosted endpoint
+    (confirmed live against this project's own Qwen/vLLM endpoint)."""
+    config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path))
+    captured = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"data": []}
+
+    def fake_get(url, **kwargs):
+        captured["url"] = url
+        return FakeResponse()
+
+    monkeypatch.setattr(config.requests, "get", fake_get)
+
+    config.list_available_models("https://api.openai.com", "my-key")
+
+    assert captured["url"] == "https://api.openai.com/v1/models"
+
+
+def test_list_available_models_respects_custom_models_path(tmp_path, monkeypatch):
+    """Real bug this guards against: Gemini's OpenAI-compat prefix
+    (v1beta/openai) already serves the role a literal "/v1" plays
+    elsewhere, so its real models-list endpoint is at plain "/models",
+    not "/v1/models" - passing models_path overrides the default."""
+    config = _reload_config(monkeypatch, XDG_CONFIG_HOME=str(tmp_path))
+    captured = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"data": []}
+
+    def fake_get(url, **kwargs):
+        captured["url"] = url
+        return FakeResponse()
+
+    monkeypatch.setattr(config.requests, "get", fake_get)
+
+    config.list_available_models(
+        "https://generativelanguage.googleapis.com/v1beta/openai", "my-key", models_path="/models"
+    )
+
+    assert captured["url"] == "https://generativelanguage.googleapis.com/v1beta/openai/models"

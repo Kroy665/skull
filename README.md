@@ -317,12 +317,12 @@ curl -LsSf https://raw.githubusercontent.com/Kroy665/skull/refs/heads/main/insta
 <summary>Or install manually (via uv, or any pip/pipx)</summary>
 
 ```bash
-uv tool install "skull @ git+https://github.com/Kroy665/skull@v0.1.1"
-# or: pipx install "skull @ git+https://github.com/Kroy665/skull@v0.1.1"
-# or: pip install "skull @ git+https://github.com/Kroy665/skull@v0.1.1"
+uv tool install "skull @ git+https://github.com/Kroy665/skull@v0.1.2"
+# or: pipx install "skull @ git+https://github.com/Kroy665/skull@v0.1.2"
+# or: pip install "skull @ git+https://github.com/Kroy665/skull@v0.1.2"
 ```
 
-Swap `v0.1.1` for whatever's [latest](https://github.com/Kroy665/skull/releases/latest).
+Swap `v0.1.2` for whatever's [latest](https://github.com/Kroy665/skull/releases/latest).
 
 </details>
 
